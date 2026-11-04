@@ -330,6 +330,17 @@ input[type=checkbox],input[type=radio]{width:22px;height:22px;flex:none;cursor:p
 td input:not([type=checkbox]):not([type=radio]),td select{min-height:36px;border-radius:var(--r-sm)}
 .chip{border-radius:99px}
 .seg button{white-space:nowrap;padding:0 12px;min-width:0;overflow:hidden;text-overflow:ellipsis}
+
+/* (i) hint button + popover */
+button.info{position:relative;display:inline-grid;place-items:center;vertical-align:middle;min-height:0;width:22px;height:22px;padding:0;margin-left:8px;border-radius:50%;background:var(--fill);color:var(--tint-t);font:italic 700 13px/1 Georgia,serif;text-transform:none;letter-spacing:0}
+button.info::before{content:"";position:absolute;inset:-11px}
+button.info[aria-expanded=true]{background:var(--tint);color:#fff}
+@media(pointer:coarse){button.info{width:28px;height:28px}}
+.btn+button.info,label.btn+button.info{margin-left:8px}
+#tip{position:fixed;z-index:3000;padding:12px 14px;border-radius:var(--r-ctl);background:var(--mat);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border:.5px solid var(--sep);box-shadow:0 8px 30px rgba(0,0,0,.18);color:var(--label);font-size:.9375rem;line-height:1.4;animation:tipin .22s var(--ease)}
+@keyframes tipin{from{opacity:0;transform:translateY(4px) scale(.98)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){#tip{animation:none}}
+.card h2 button.info{vertical-align:-5px}
 </style>
 </head>
 <body class="locked">
@@ -1184,6 +1195,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       batch: { date: todayISO(), mode: 'N', refStart: db.refCounter, debitNarration: NARR.supplier, creditNarration: '', combine: true, split: false } }
   };
   let labelToId = new Map();
+  /** Small (i) button that reveals a hint on demand, instead of permanent helper text. */
+  const info = tip => `<button type="button" class="info" data-info="${esc(tip)}" aria-label="More information" aria-expanded="false">i</button>`;
   const head = (t, sub) => `<h1 class="large">${esc(t)}</h1><p class="sub">${esc(sub)}</p>`;
   const maskAcct = a => (ui.reveal ? a : '•'.repeat(Math.max(0, a.length - 4)) + a.slice(-4));
 
@@ -1255,7 +1268,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       </div>
       ${dropZone()}<div id="mapper"></div>
     </section>
-    <section class="card"><h2>Batch details</h2><div class="grid">
+    <section class="card"><h2>Batch details${info('Narration tokens: {date} {month} {outlet}. Special characters are removed for bank safety.')}</h2><div class="grid">
       <label class="f">Transaction date<input type="date" data-b="date" value="${esc(b.date)}"></label>
       <label class="f">Payment mode<select data-b="mode">
         ${[['N', 'NEFT'], ['A', 'Auto (NEFT, RTGS ≥ ₹2L)'], ['R', 'RTGS'], ['I', 'IMPS']].map(([v, t]) => `<option value="${v}" ${b.mode === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
@@ -1266,8 +1279,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     </div>
     <div class="row" style="margin-top:14px;gap:20px">
       <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Combine lines for the same beneficiary</label>
-      <label class="row"><input type="checkbox" data-b="split" ${b.split ? 'checked' : ''}> One file per debit account</label></div>
-    <p class="muted">Narration tokens: {date} {month} {outlet}. Special characters are removed for bank safety.</p></section>
+      <label class="row"><input type="checkbox" data-b="split" ${b.split ? 'checked' : ''}> One file per debit account</label></div></section>
     <section class="card"><h2>Review</h2>
       <datalist id="benlist">${db.beneficiaries.map(x => `<option value="${esc(benLabel(x))}"></option>`).join('')}</datalist>
       <div class="scroll"><table class="rt"><thead><tr><th></th><th>Outlet</th><th>Report name</th><th>Beneficiary</th><th class="num">Pending</th><th class="num">Pay</th><th>Debit account</th><th>Match</th></tr></thead>
@@ -1424,7 +1436,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <button data-act="reveal">${ui.reveal ? 'Hide numbers' : 'Reveal numbers'}</button>
       <button data-act="ben-export" ${unreg ? '' : 'disabled'}>Registration file (${unreg} new)</button>
       <button data-act="ben-reg" ${unreg ? '' : 'disabled'}>Mark all registered</button></div>
-      <p class="muted">${db.beneficiaries.length} beneficiaries · ${al.length} saved name matches.${stubs ? ` <b>${stubs}</b> were added from your bank report and still need an account number and IFSC — import your bank details file and they complete automatically by code or name, or use Edit.` : ''} The bank only accepts payments to beneficiaries registered under the same nickname.</p>
+      <p class="muted">${db.beneficiaries.length} beneficiaries · ${al.length} saved name matches${stubs ? ` · <b>${stubs}</b> need an account number and IFSC${info('These were added from your bank report. Import your bank details file and they complete automatically by code or name, or use Edit.')}` : ''}${info('The bank only accepts payments to beneficiaries registered under the same nickname.')}</p>
       <div class="scroll" style="margin-top:12px"><table><thead><tr><th>Name</th><th>Nickname / code</th><th>Account</th><th>IFSC</th><th>Status</th><th></th></tr></thead><tbody id="bt">${benRows()}</tbody></table></div></section>
       <section class="card"><h2>Saved name matches</h2>${al.length ? `<div class="scroll" style="max-height:30vh"><table><tbody>${al.map(([k, b]) => `<tr><td>${esc(k)}</td><td>→ ${esc(b.name)}</td><td class="num"><button class="sm danger" data-act="alias-del" data-k="${esc(k)}">Remove</button></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Matches you confirm on the Generate screen are remembered here.</p>'}</section>`;
   }
@@ -1478,7 +1490,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   function viewSet() {
     const s = db.settings, tp = s.templatePay, tb = s.templateBen;
     return `${head('Settings', 'Debit accounts, bank templates and data management.')}
-    <section class="card"><h2>Debit accounts</h2>
+    <section class="card"><h2>Debit accounts${info('Lines whose name or outlet contains a tag (DT1 / DT2) default to that account.')}</h2>
       <div class="scroll" style="max-height:none"><table><thead><tr><th>Default</th><th>Label</th><th>Account number</th><th>Outlet tags</th><th></th></tr></thead><tbody>
       ${db.accounts.map(a => `<tr><td><input type="radio" name="defacc" data-act="setdef" data-id="${a.id}" ${s.defaultAccountId === a.id ? 'checked' : ''} aria-label="Default"></td><td>${esc(a.label)}</td><td class="mono">${esc('•'.repeat(Math.max(0, String(a.number).length - 4)) + String(a.number).slice(-4))}</td><td>${esc((a.tags || []).join(', '))}</td><td class="num">${ui.role === 'admin' ? `<button class="sm danger" data-act="acc-del" data-id="${a.id}">Remove</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="5" class="muted" style="padding:24px;text-align:center">No debit accounts yet. Add one below.</td></tr>'}
       </tbody></table></div>
@@ -1486,20 +1498,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <label class="f">Label<input type="text" name="label" placeholder="Kotak – DT1" required></label>
         <label class="f">Account number<input type="text" name="number" inputmode="numeric" required autocomplete="off"></label>
         <label class="f">Outlet tags (e.g. DT1)<input type="text" name="tags" placeholder="DT1"></label>
-        <button class="primary" type="submit">Add account</button></form>
-      <p class="muted">Lines whose name or outlet contains a tag (DT1 / DT2) default to that account.</p></section>
-    <section class="card"><h2>Bank templates</h2><div class="grid">
-      <div><label class="btn">Upload payment template<input hidden type="file" data-tpl="pay" accept=".xlsx,.xls,.csv"></label>
-        <p class="muted">${tp ? `Using “${esc(tp.sheetName)}” · ${tp.headers.length} columns (column order preserved).` : 'Using built-in 31-column layout (matches your Salary Payment template).'}</p></div>
-      <div><label class="btn">Upload beneficiary template<input hidden type="file" data-tpl="ben" accept=".xlsx,.xls,.csv"></label>
-        <p class="muted">${tb ? `Using “${esc(tb.sheetName)}” · ${tb.headers.length} columns.` : 'Using built-in beneficiary layout.'}</p></div>
+        <button class="primary" type="submit">Add account</button></form></section>
+    <section class="card"><h2>Bank templates${info('Confirm the date format against one accepted bank upload before relying on it.')}</h2><div class="grid">
+      <div><label class="btn">Upload payment template<input hidden type="file" data-tpl="pay" accept=".xlsx,.xls,.csv"></label>${info(tp ? `Using “${tp.sheetName}” · ${tp.headers.length} columns (column order preserved).` : 'Using the built-in 31-column layout (matches your Salary Payment template).')}</div>
+      <div><label class="btn">Upload beneficiary template<input hidden type="file" data-tpl="ben" accept=".xlsx,.xls,.csv"></label>${info(tb ? `Using “${tb.sheetName}” · ${tb.headers.length} columns.` : 'Using the built-in beneficiary layout.')}</div>
       <label class="f">Date format in the payment file<select data-set="dateFormat">
-        ${[['dd/mm/yyyy', 'dd/mm/yyyy (text)'], ['dd-mm-yyyy', 'dd-mm-yyyy (text)'], ['yyyy-mm-dd', 'yyyy-mm-dd (text)'], ['excel', 'Excel date serial']].map(([v, t]) => `<option value="${v}" ${s.dateFormat === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
-      <p class="muted">Confirm the date format against one accepted bank upload before relying on it.</p></section>
-    <section class="card"><h2>Data</h2><div class="row">
+        ${[['dd/mm/yyyy', 'dd/mm/yyyy (text)'], ['dd-mm-yyyy', 'dd-mm-yyyy (text)'], ['yyyy-mm-dd', 'yyyy-mm-dd (text)'], ['excel', 'Excel date serial']].map(([v, t]) => `<option value="${v}" ${s.dateFormat === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div></section>
+    <section class="card"><h2>Data${info('Your data is saved to your protected cloud account. A backup is an extra copy for safekeeping and contains bank details — keep it private.')}</h2><div class="row">
       <button data-act="backup">Download backup (.json)</button>
-      ${ui.role === 'admin' ? '<label class="btn">Restore backup<input hidden type="file" id="restore" accept=".json"></label>\n      <button class="danger" data-act="reset">Erase all data</button>' : ''}</div>
-      <p class="muted">Everything is stored in this browser only. Backups contain bank details — keep them private.</p></section>`;
+      ${ui.role === 'admin' ? '<label class="btn">Restore backup<input hidden type="file" id="restore" accept=".json"></label>\n      <button class="danger" data-act="reset">Erase all data</button>' : ''}</div></section>`;
   }
   async function loadTemplate(kind, file) {
     try {
@@ -1544,15 +1551,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     return `${head('Security & Audit', 'Who can sign in, what they can do, and a tamper-evident record of every action.')}
     ${ui.role === 'admin' ? '<section class="card" id="team"><h2>Team access</h2><p class="muted">Loading…</p></section>' : ''}
     <section class="card"><h2>Checklist</h2>${items.map(([k, t, d, a]) => `<div class="check"><span class="pip ${k}" aria-hidden="true"></span><div class="grow"><b>${t}</b><span class="d">${esc(d)}</span></div><span class="chip ${k === 'ok' ? 'ok' : k === 'warn' ? 'warn' : 'bad'}">${k === 'ok' ? 'OK' : k === 'warn' ? 'Review' : 'Action'}</span>${a}</div>`).join('')}</section>
-    <section class="card"><h2>Passcode</h2><div class="row">
+    <section class="card"><h2>Passcode${info('A convenience lock that stops casual use, not a defence against someone with full access to this browser profile. Five wrong attempts pause entry for 30 seconds.')}</h2><div class="row">
       <button class="primary" data-act="pin-set">${hasPin() ? 'Change passcode' : 'Set passcode'}</button>
-      ${hasPin() ? `<label class="row" style="margin-left:8px"><input type="checkbox" data-act="pin-gate" ${s.gate ? 'checked' : ''}> Require for downloads &amp; revealing numbers</label><button class="danger" data-act="pin-remove">Remove passcode</button>` : ''}</div>
-      <p class="muted">A convenience lock that stops casual use, not a defence against someone with full access to this browser profile. Five wrong attempts pause entry for 30 seconds.</p></section>
-    <section class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Audit log</h2>
+      ${hasPin() ? `<label class="row" style="margin-left:8px"><input type="checkbox" data-act="pin-gate" ${s.gate ? 'checked' : ''}> Require for downloads &amp; revealing numbers</label><button class="danger" data-act="pin-remove">Remove passcode</button>` : ''}</div></section>
+    <section class="card"><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0">Audit log${info('Each entry is hash-chained to the one before it, so edits to older entries are detectable.')}</h2>
       <div class="row"><button data-act="audit-verify">Verify integrity</button><button data-act="audit-csv" ${db.audit.length ? '' : 'disabled'}>Export CSV</button></div></div>
       ${db.audit.length ? `<div class="scroll"><table><thead><tr><th>Time</th><th>User</th><th>Event</th><th>Detail</th><th>Seal</th></tr></thead><tbody>${db.audit.map(a => `<tr><td>${esc(new Date(a.ts).toLocaleString('en-IN'))}</td><td>${esc(a.actor || '')}</td><td>${esc(a.event)}</td><td>${esc(a.detail)}</td><td class="mono">${esc(a.h.slice(0, 8))}</td></tr>`).join('')}</tbody></table></div>`
-        : '<p class="muted" style="text-align:center;padding:20px 0">Nothing recorded yet. File generations, imports and passcode events appear here.</p>'}
-      <p class="muted">Each entry is hash-chained to the one before it, so edits to older entries are detectable.</p></section>`;
+        : '<p class="muted" style="text-align:center;padding:20px 0">Nothing recorded yet. File generations, imports and passcode events appear here.</p>'}</section>`;
   }
 
   /* ================= DASHBOARD ================= */
@@ -2223,6 +2228,21 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     cells.forEach((c, k) => { c.textContent = v[k] || ''; c.classList.toggle('on', k === Math.min(v.length, 5)); });
     if (v.length === 6 && !authSt.busy) i.form.requestSubmit();
   });
+  /* (i) hints: one popover at a time, anchored to its button, closes on outside tap / Escape */
+  let tipBtn = null;
+  const closeTip = () => { const t = document.getElementById('tip'); if (t) t.remove(); if (tipBtn) tipBtn.setAttribute('aria-expanded', 'false'); tipBtn = null; };
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('button.info');
+    if (!b) { if (!(e.target.closest && e.target.closest('#tip'))) closeTip(); return; }
+    e.preventDefault(); const same = tipBtn === b; closeTip(); if (same) return;
+    const t = document.createElement('div'); t.id = 'tip'; t.setAttribute('role', 'status'); t.textContent = b.dataset.info; document.body.appendChild(t);
+    const r = b.getBoundingClientRect(), w = Math.min(320, innerWidth - 24); t.style.width = w + 'px';
+    const left = Math.max(12, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 12)), below = r.bottom + 8 + t.offsetHeight < innerHeight;
+    t.style.left = left + 'px'; t.style.top = (below ? r.bottom + 8 : Math.max(12, r.top - 8 - t.offsetHeight)) + 'px';
+    b.setAttribute('aria-expanded', 'true'); tipBtn = b;
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTip(); });
+  addEventListener('scroll', closeTip, true); addEventListener('resize', closeTip);
   document.addEventListener('submit', e => {
     if (e.target.id !== 'authform') return; e.preventDefault();
     const f = e.target, s = authSt;
@@ -2275,7 +2295,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const box = $('#team'); if (!box) return;
     try {
       const list = await Cloud.users.list();
-      box.innerHTML = `<h2>Team access</h2><p class="muted" style="margin:0 0 10px">Only these addresses can sign in. Operators can generate and verify payments; admins also manage people, delete data and restore backups.</p>
+      box.innerHTML = `<h2>Team access${info('Only these addresses can sign in. Operators can generate and verify payments; admins also manage people, delete data and restore backups.')}</h2>
         <div class="scroll" style="max-height:none"><table><thead><tr><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
         ${list.map(u => `<tr><td>${esc(u.email)}${u.email === ui.email ? ' <span class="chip zero">you</span>' : ''}</td><td>${esc(u.role)}</td><td><span class="chip ${u.active ? 'ok' : 'warn'}">${u.active ? 'Active' : 'Disabled'}</span></td>
           <td class="num"><button class="sm" data-act="team-role" data-email="${esc(u.email)}" data-v="${u.role === 'admin' ? 'operator' : 'admin'}">Make ${u.role === 'admin' ? 'operator' : 'admin'}</button>
