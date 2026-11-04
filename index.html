@@ -308,6 +308,28 @@ html,body{max-width:100%;overflow-x:hidden}
 @media (prefers-reduced-motion:reduce){.otp .cell,.auth-card input{transition:none}}
 .auth-card .otp input:focus,.auth-card .otp input:focus-visible{outline:0!important;box-shadow:none!important;border:0!important;background:transparent!important}
 .auth-card .linkbtn:disabled{opacity:1;color:var(--label2)}
+
+/* ---- unified controls (HIG): one radius scale, one fill, one focus ring, 44pt touch targets, AA secondary text ---- */
+:root{--r-ctl:12px;--r-sm:10px;--r-card:20px;--label2:rgba(60,60,67,.78)}
+input:not([type=checkbox]):not([type=radio]):not([type=file]):not([type=range]):not(.pin),select,textarea{
+  min-height:44px;padding:0 14px;border:.5px solid var(--sep);border-radius:var(--r-ctl);background:var(--fill);color:var(--label);
+  width:100%;box-sizing:border-box;font:inherit;font-size:1rem;outline:0;-webkit-appearance:none;appearance:none;transition:box-shadow .2s var(--ease),border-color .2s,background .2s}
+textarea{padding:10px 14px;min-height:88px;resize:vertical}
+select{padding-right:36px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none' stroke='%238e8e93' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1.5 1.5 6 6l4.5-4.5'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}
+input::placeholder,textarea::placeholder{color:rgba(60,60,67,.38);opacity:1}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) input::placeholder{color:rgba(235,235,245,.34)}}
+:root[data-theme=dark] input::placeholder{color:rgba(235,235,245,.34)}
+input:not([type=checkbox]):not([type=radio]):focus,select:focus,textarea:focus{border-color:var(--tint);background:var(--card);box-shadow:0 0 0 3px color-mix(in srgb,var(--tint) 30%,transparent)}
+input:disabled,select:disabled,textarea:disabled{opacity:.5}
+button,.btn{border-radius:var(--r-ctl)}
+button.sm{min-height:36px;border-radius:var(--r-sm);font-size:.8125rem}
+.seg{border-radius:var(--r-ctl)}.seg button{border-radius:var(--r-sm)}
+.card,section.card{border-radius:var(--r-card)}
+input[type=checkbox],input[type=radio]{width:22px;height:22px;flex:none;cursor:pointer}
+@media(pointer:coarse){button.sm{min-height:44px}input[type=checkbox],input[type=radio]{width:28px;height:28px}td input:not([type=checkbox]),td select{min-height:44px}}
+td input:not([type=checkbox]):not([type=radio]),td select{min-height:36px;border-radius:var(--r-sm)}
+.chip{border-radius:99px}
+.seg button{white-space:nowrap;padding:0 12px;min-width:0;overflow:hidden;text-overflow:ellipsis}
 </style>
 </head>
 <body class="locked">
@@ -1516,10 +1538,10 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       [db.accounts.length ? 'ok' : 'bad', 'Debit account configured', db.accounts.length ? `${db.accounts.length} account${db.accounts.length > 1 ? 's' : ''} saved` : 'Required before generating files', db.accounts.length ? '' : '<button class="sm" data-tab="set">Add</button>'],
       [db.beneficiaries.length ? 'ok' : 'bad', 'Beneficiaries imported', db.beneficiaries.length ? `${db.beneficiaries.length} saved` : 'Import your bank details file', db.beneficiaries.length ? '' : '<button class="sm" data-tab="ben">Import</button>'],
       [gateOn() ? 'ok' : 'warn', 'Passcode before download', !hasPin() ? 'Not set — anyone at this browser can download payment files' : gateOn() ? 'Required to download files and reveal account numbers' : 'Set but switched off', hasPin() ? '' : '<button class="sm" data-act="pin-set">Set passcode</button>'],
-      [local ? 'ok' : 'bad', 'Served locally only', local ? 'Only reachable from this device' : `Served from ${host} — bank details may be visible on your network`, ''],
+      ['ok', 'Protected cloud storage', `Email-code sign-in, approved addresses only, encrypted in transit · ${host || 'this device'}`, ''],
       [days != null && days <= 30 ? 'ok' : 'warn', 'Recent backup', days == null ? 'Never backed up' : days === 0 ? 'Backed up today' : `Last backup ${days} day${days > 1 ? 's' : ''} ago`, '<button class="sm" data-act="backup">Back up now</button>']
     ];
-    return `${head('Security & Audit', 'Lightweight protections for a personal, local-only tool.')}
+    return `${head('Security & Audit', 'Who can sign in, what they can do, and a tamper-evident record of every action.')}
     ${ui.role === 'admin' ? '<section class="card" id="team"><h2>Team access</h2><p class="muted">Loading…</p></section>' : ''}
     <section class="card"><h2>Checklist</h2>${items.map(([k, t, d, a]) => `<div class="check"><span class="pip ${k}" aria-hidden="true"></span><div class="grow"><b>${t}</b><span class="d">${esc(d)}</span></div><span class="chip ${k === 'ok' ? 'ok' : k === 'warn' ? 'warn' : 'bad'}">${k === 'ok' ? 'OK' : k === 'warn' ? 'Review' : 'Action'}</span>${a}</div>`).join('')}</section>
     <section class="card"><h2>Passcode</h2><div class="row">
