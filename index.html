@@ -701,6 +701,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const map = new Map(existing.map(b => [C.keyOf(b), b]));
     let added = 0, merged = 0, dupes = 0;
     for (const it of items) {
+      // same account but an earlier import lost its leading zeros -> correct it in place instead of creating a duplicate
+      const strip = v => String(v || '').replace(/^0+/, ''), zfix = !map.has(C.keyOf(it)) && it.account && existing.find(b => b.account && b.account !== it.account && strip(b.account) === strip(it.account) && String(b.ifsc || '').toUpperCase() === it.ifsc);
+      if (zfix) { map.delete(C.keyOf(zfix)); zfix.account = it.account; if (it.nickname && !zfix.nicknames.includes(it.nickname)) zfix.nicknames.push(it.nickname); map.set(C.keyOf(zfix), zfix); merged++; continue; }
       // complete a bank-report placeholder (no account yet) that has the same code or name
       const stub = !map.has(C.keyOf(it)) && existing.find(b => !b.account && ((it.nickname && b.nicknames.some(n => C.codeEq(C.normCode(n), C.normCode(it.nickname)))) || C.norm(b.name) === C.norm(it.name)));
       if (stub) { Object.assign(stub, { account: it.account, ifsc: it.ifsc, benType: it.benType || stub.benType || '', name: it.name || stub.name }); if (it.nickname && !stub.nicknames.includes(it.nickname)) stub.nicknames.unshift(it.nickname); map.set(C.keyOf(stub), stub); merged++; continue; }
