@@ -510,7 +510,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   /** Account numbers must stay text. Numeric cells >= 1e15 may have lost digits in Excel -> flagged. */
   C.acctStr = v => {
-    if (typeof v === 'number') return { text: BigInt(Math.round(v)).toString(), risky: Math.abs(v) >= 1e15 };
+    if (typeof v === 'number') return { text: BigInt(Math.round(v)).toString(), risky: Math.abs(v) >= 1e15, numeric: true };
     return { text: String(v == null ? '' : v).replace(/\s+/g, ''), risky: false };
   };
 
@@ -687,6 +687,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         benType: map.benType != null ? String(r[map.benType] == null ? '' : r[map.benType]).trim() : ''
       });
     });
+    const nums = rows.slice(hi + 1).filter(r => typeof r[map.account] === 'number').length;
+    if (nums) warnings.unshift(`${nums} account number${nums > 1 ? 's are' : ' is'} stored as a number in this file, so any leading zeros are lost. Compare those with your bank's beneficiary screen and fix them with Edit.`);
     return { items, warnings };
   };
 
@@ -1112,7 +1114,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   async function readSheets(file) {
     const buf = await file.arrayBuffer(); validateBuf(file, buf);
     const wb = X.read(buf, { type: 'array' });
-    const sheets = wb.SheetNames.map(n => ({ name: n, rows: X.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }) }));
+    const sheets = wb.SheetNames.map(n => {
+      const ws = wb.Sheets[n], rows = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }), r0 = X.utils.decode_range(ws['!ref'] || 'A1').s;
+      // A number cell whose displayed text is all digits (e.g. format 00000) keeps its leading zeros.
+      rows.forEach((row, i) => row.forEach((v, j) => { if (typeof v === 'number') { const c = ws[X.utils.encode_cell({ r: r0.r + i, c: r0.c + j })]; if (c && /^\d+$/.test(c.w || '') && c.w.length > String(v).length && !/^0+$/.test(c.w)) row[j] = c.w; } }));
+      return { name: n, rows };
+    });
     if (sheets.reduce((s, x) => s + x.rows.length, 0) > MAX_ROWS) throw new Error('Too many rows (limit 20,000).');
     return sheets;
   }
