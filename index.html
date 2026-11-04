@@ -279,6 +279,8 @@ body.locked #app{visibility:hidden}
 
 @media (max-width:380px){.auth-card{padding:24px 18px}.auth-card h1{font-size:24px}.auth-card input[name=code]{letter-spacing:.2em;font-size:20px}}
 html,body{max-width:100%;overflow-x:hidden}
+
+.sync{white-space:nowrap;flex:none}.sync.icon{width:28px;padding:0;justify-content:center;background:transparent;font-size:15px}.bar-end{flex:none;min-width:28px;justify-content:flex-end;padding-right:max(4px,env(safe-area-inset-right))}
 </style>
 </head>
 <body class="locked">
@@ -973,8 +975,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /** Debit account a vendor is normally paid from (learned from the bank report). */
   const vendorAcct = ben => {
     if (!ben) return null; const m = db.settings.vendorDebit || {};
-    for (const n of ben.nicknames || []) { const k = C.normCode(n), hit = Object.keys(m).find(x => C.codeEq(x, k)); if (hit) { const a = db.accounts.find(x => String(x.number) === m[hit]); if (a) return a.id; } }
+    for (const n of [...(ben.nicknames || []), ben.name]) { const k = C.normCode(n), hit = Object.keys(m).find(x => C.codeEq(x, k)); if (hit) { const a = db.accounts.find(x => String(x.number) === m[hit]); if (a) return a.id; } }
     return null;
+  };
+  /** Remember which account pays this beneficiary, so the next batch pre-selects it. */
+  const learnDebit = (benId, accId) => {
+    const b = db.beneficiaries.find(x => x.id === benId), a = db.accounts.find(x => x.id === accId); if (!b || !a) return false;
+    const keys = (b.nicknames && b.nicknames.length ? b.nicknames : [b.name]).map(C.normCode).filter(Boolean), m = db.settings.vendorDebit = db.settings.vendorDebit || {};
+    let changed = false; keys.forEach(k => { const hit = Object.keys(m).find(x => C.codeEq(x, k)) || k; if (m[hit] !== String(a.number)) { m[hit] = String(a.number); changed = true; } });
+    return changed;
   };
   const NARR = { supplier: 'Supplier payment {date}', salary: 'Salary {month}' };
 
@@ -1285,7 +1294,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     dock.innerHTML = `<div class="dock-in">
       <details class="issues"><summary class="stats" aria-label="Summary. Click for details"><span><b>${res.rows.length}</b> payment${res.rows.length === 1 ? '' : 's'}</span><span class="dot">·</span><span><b>${inr(res.total)}</b></span><span class="dot">·</span>
         <span>${zc(res.errors.length, 'bad')} blocking</span><span class="dot">·</span><span>${zc(res.warnings.length, 'warn')} warnings</span></summary>
-        <div class="pop">${res.errors.length ? `<b>Fix before export</b><ul>${res.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
+        <div class="pop">${res.errors.length ? `<b>Fix before export</b><ul>${res.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>${res.errors.some(e => /bank details missing/.test(e)) ? '<button class="sm" data-tab="ben">Open Beneficiaries to import bank details</button>' : ''}` : ''}
         ${res.warnings.length ? `<b>Review</b><ul>${res.warnings.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
         ${!res.errors.length && !res.warnings.length ? 'No issues found.' : ''}</div></details>
       <div class="btns"><button data-act="export" data-k="csv" ${ok ? '' : 'disabled'}>Download CSV</button>
@@ -1318,6 +1327,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       id: C.uid(), ts: new Date().toISOString(), type: g.type, report: g.file, file: files.join(', '), iso: b.date, kind,
       total: res.total, count: res.rows.length, headers, sheet, status: 'Generated', rows: res.rows
     });
+    g.lines.filter(l => l.include && l.benId && l.confirmed).forEach(l => { learnDebit(l.benId, l.accountId); const k = C.norm(l.source); if (k && !db.aliases[k]) db.aliases[k] = l.benId; });
     db.refCounter = maxRef + 1; b.refStart = db.refCounter; save();
     audit('Payment file generated', `${res.rows.length} payments · ${inr(res.total)} · ${g.type} · ${files.join(', ')}`);
     toast(`${files.length} file${files.length > 1 ? 's' : ''} downloaded · next reference ${db.refCounter}`);
@@ -2054,7 +2064,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     else if (t.dataset.f) {
       const tr = t.closest('tr'), l = g.lines[+tr.dataset.i];
       if (t.dataset.f === 'include') { l.include = t.checked; tr.classList.toggle('off', !l.include); }
-      else if (t.dataset.f === 'acct') l.accountId = t.value;
+      else if (t.dataset.f === 'acct') { l.accountId = t.value; if (l.benId && learnDebit(l.benId, l.accountId)) save(); }
       else if (t.dataset.f === 'amount') l.amount = C.round2(parseFloat(t.value) || 0);
       else if (t.dataset.f === 'ben') {
         const id = labelToId.get(t.value);
@@ -2105,7 +2115,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /* ================= SIGN-IN, SESSION & CLOUD ================= */
   const IDLE_MS = 20 * 60 * 1000;
   let idleT = 0, authSt = { step: 'email', email: '', msg: '', busy: false, wait: 0, fails: 0 }, waitT = 0, lastErr = '', lastPull = 0;
-  const syncPill = () => { const m = { saved: ['✓ Saved', 'ok'], pending: ['Saving…', ''], saving: ['Saving…', ''], error: ['Not saved', 'warn'], offline: ['Offline · retrying', 'warn'] }[ui.sync] || ['', '']; return ui.role ? `<span class="sync ${m[1]}" title="${esc(ui.syncMsg || '')}">${m[0]}</span>` : ''; };
+  const syncPill = () => { const m = { saved: ['✓', 'ok icon'], pending: ['Saving…', ''], saving: ['Saving…', ''], error: ['Not saved', 'warn'], offline: ['Offline · retrying', 'warn'] }[ui.sync] || ['', '']; return ui.role ? `<span class="sync ${m[1]}" role="status" title="${esc(ui.syncMsg || (ui.sync === 'saved' ? 'All changes saved to the cloud' : ''))}" aria-label="${ui.sync === 'saved' ? 'All changes saved' : esc(m[0])}">${m[0]}</span>` : ''; };
   function onSync(s, msg) {
     ui.sync = s; ui.syncMsg = msg; const el = $('.bar-end'); if (el) el.innerHTML = syncPill();
     if (s === 'error' || s === 'offline') { if (msg !== lastErr) { lastErr = msg; toast('Could not save to the cloud: ' + msg, true); } } else if (s === 'saved') lastErr = '';
