@@ -281,6 +281,33 @@ body.locked #app{visibility:hidden}
 html,body{max-width:100%;overflow-x:hidden}
 
 .sync{white-space:nowrap;flex:none}.sync.icon{width:28px;padding:0;justify-content:center;background:transparent;font-size:15px}.bar-end{flex:none;min-width:28px;justify-content:flex-end;padding-right:max(4px,env(safe-area-inset-right))}
+
+/* ---- sign-in refinements (HIG): quiet placeholders, single focus ring, 44pt targets, AA text, six-cell code entry ---- */
+.auth-card{--ph:rgba(60,60,67,.3)}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]) .auth-card{--ph:rgba(235,235,245,.3)}}
+:root[data-theme=dark] .auth-card{--ph:rgba(235,235,245,.3)}
+.auth-card .appicon{width:44px;height:44px;border-radius:11px}
+.auth-card h1{font-size:clamp(1.5rem,5.5vw,1.75rem)}
+.auth-card p.muted,.auth-card .f>span,.auth-card label.f{color:var(--label2)}
+.auth-card p{font-size:.9375rem;line-height:1.4}.auth-card p.small{font-size:.8125rem}
+.auth-card .f>span,.auth-card label.f{font-size:.8125rem;font-weight:500}
+.auth-card input:not([name=code]){font-size:1rem;color:var(--label);background:var(--fill);border:.5px solid var(--sep);border-radius:12px;padding:0 14px;outline:0;transition:box-shadow .2s var(--ease),border-color .2s}
+.auth-card input::placeholder{color:var(--ph);opacity:1}
+.auth-card input:not([name=code]):focus,.auth-card input:not([name=code]):focus-visible{outline:0;border-color:var(--tint);box-shadow:0 0 0 3px color-mix(in srgb,var(--tint) 30%,transparent)}
+.auth-card .linkbtn{min-height:44px;padding:0 8px;margin:0 -8px;background:none;border:0;border-radius:10px;color:var(--tint-t);font:inherit;font-size:.9375rem;font-weight:500;cursor:pointer}
+.auth-card .linkbtn:disabled{color:var(--label2);cursor:default}
+.auth-card .linkbtn:focus-visible{outline:2px solid var(--tint);outline-offset:1px}
+.auth-card .row{justify-content:space-between;align-items:center}
+.otp{position:relative;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.otp .cell{height:56px;border-radius:12px;display:grid;place-items:center;background:var(--fill);border:.5px solid var(--sep);color:var(--label);font-style:normal;font-size:1.5rem;font-weight:600;font-variant-numeric:tabular-nums;transition:box-shadow .2s var(--ease),border-color .2s,background .2s}
+.otp:focus-within .cell.on{background:var(--card);border-color:var(--tint);box-shadow:0 0 0 3px color-mix(in srgb,var(--tint) 30%,transparent)}
+.auth-card .otp input{position:absolute;inset:0;width:100%;height:100%;min-height:0;padding:0;margin:0;border:0;outline:0;background:transparent;color:transparent;caret-color:transparent;font-size:16px;letter-spacing:0;text-indent:0;text-align:left}
+.auth-card .otp input::selection{background:transparent}
+.auth-msg{font-size:.9375rem}
+@media (max-width:380px){.otp{gap:6px}.otp .cell{height:50px;font-size:1.25rem}}
+@media (prefers-reduced-motion:reduce){.otp .cell,.auth-card input{transition:none}}
+.auth-card .otp input:focus,.auth-card .otp input:focus-visible{outline:0!important;box-shadow:none!important;border:0!important;background:transparent!important}
+.auth-card .linkbtn:disabled{opacity:1;color:var(--label2)}
 </style>
 </head>
 <body class="locked">
@@ -2143,9 +2170,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $('#auth').innerHTML = `<div class="auth-card"><div class="appicon">${svg('sec', 26)}</div><h1 id="auth-t">Dakshin PayFlow</h1>
       <p class="muted">${code ? `Enter the code sent to <b>${esc(s.email)}</b>.` : 'Sign in with a one-time code sent to your email.'}</p>
       <form id="authform" autocomplete="on" novalidate>
-        ${code ? `<label class="f">Verification code<input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="123456" aria-describedby="auth-m"></label>
+        ${code ? `<div class="f"><span id="otp-l">Verification code</span><div class="otp"><i class="cell on"></i>${'<i class="cell"></i>'.repeat(5)}<input name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" aria-labelledby="otp-l" aria-describedby="auth-m"></div></div>
           <button class="primary" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Checking…' : 'Verify and sign in'}</button>
-          <div class="row" style="justify-content:space-between"><button type="button" class="sm" data-act="auth-back">Use a different email</button><button type="button" class="sm" data-act="auth-resend" ${s.wait > 0 || s.busy ? 'disabled' : ''}>${s.wait > 0 ? `Resend in ${s.wait}s` : 'Resend code'}</button></div>`
+          <div class="row" style="justify-content:space-between"><button type="button" class="linkbtn" data-act="auth-back">Use a different email</button><button type="button" class="linkbtn" data-act="auth-resend" ${s.wait > 0 || s.busy ? 'disabled' : ''}>${s.wait > 0 ? `Resend in ${s.wait}s` : 'Resend code'}</button></div>`
         : `<label class="f">Email<input type="email" name="email" autocomplete="username" inputmode="email" value="${esc(s.email)}" placeholder="you@example.com" aria-describedby="auth-m"></label>
           <button class="primary" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Sending…' : 'Send code'}</button>`}
         <p id="auth-m" class="auth-msg" role="alert">${esc(s.msg)}</p></form>
@@ -2167,6 +2194,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
     showAuth();
   }
+  /* six-digit entry: the real input sits invisibly over six cells; auto-submits on the sixth digit */
+  document.addEventListener('input', e => {
+    const i = e.target; if (!i.matches || !i.matches('.otp input')) return;
+    const v = i.value = i.value.replace(/\D/g, '').slice(0, 6), cells = i.parentNode.querySelectorAll('.cell');
+    cells.forEach((c, k) => { c.textContent = v[k] || ''; c.classList.toggle('on', k === Math.min(v.length, 5)); });
+    if (v.length === 6 && !authSt.busy) i.form.requestSubmit();
+  });
   document.addEventListener('submit', e => {
     if (e.target.id !== 'authform') return; e.preventDefault();
     const f = e.target, s = authSt;
