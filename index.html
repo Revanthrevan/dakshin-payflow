@@ -361,6 +361,27 @@ button.info[aria-expanded=true]{background:var(--tint);color:#fff}
 /* code entry: the real input is only a hidden capture layer over the six cells (beats the shared control style) */
 .auth-card .otp input[name=code]{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;outline:0!important;color:transparent!important;-webkit-text-fill-color:transparent!important;caret-color:transparent!important;font-size:16px!important;letter-spacing:0!important;opacity:1}
 .auth-card .otp input[name=code]::selection{background:transparent}
+
+/* ---- sign-in motion: card swap, code pop, error shake, success sweep, unlock cross-fade (spring-like easing) ---- */
+.auth-card.swap{animation:cardswap .36s var(--ease) both}
+@keyframes cardswap{from{opacity:0;transform:translateY(10px) scale(.985)}to{opacity:1;transform:none}}
+.otp .cell.pop{animation:cellpop .22s var(--ease)}
+@keyframes cellpop{0%{transform:scale(.88)}60%{transform:scale(1.05)}100%{transform:scale(1)}}
+.otp.bad{animation:shake .42s cubic-bezier(.36,.07,.19,.97)}
+@keyframes shake{10%,90%{transform:translateX(-2px)}20%,80%{transform:translateX(4px)}30%,50%,70%{transform:translateX(-7px)}40%,60%{transform:translateX(7px)}}
+.otp.bad .cell{border-color:var(--bad,#d70015);background:color-mix(in srgb,var(--bad,#d70015) 10%,var(--fill))}
+.auth-card.busy .otp .cell{opacity:.65}
+.auth-card.ok .otp .cell{border-color:#30b050;background:color-mix(in srgb,#34c759 16%,var(--fill));transition-delay:calc(var(--k,0)*45ms)}
+.auth-card.ok .otp .cell:nth-child(1){--k:0}.auth-card.ok .otp .cell:nth-child(2){--k:1}.auth-card.ok .otp .cell:nth-child(3){--k:2}.auth-card.ok .otp .cell:nth-child(4){--k:3}.auth-card.ok .otp .cell:nth-child(5){--k:4}.auth-card.ok .otp .cell:nth-child(6){--k:5}
+.auth-card.ok button.primary{background:#30b050}
+.auth-card button.primary{transition:background .25s var(--ease),opacity .2s,transform .3s var(--ease)}
+body.unlocking #auth{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:var(--bg);pointer-events:none;animation:authout .34s var(--ease) forwards}
+body.unlocking #auth .auth-card{animation:cardout .34s var(--ease) forwards}
+body.unlocking #app{visibility:visible;animation:appin .5s var(--ease) both}
+@keyframes authout{to{opacity:0}}
+@keyframes cardout{to{opacity:0;transform:scale(.97) translateY(-6px)}}
+@keyframes appin{from{opacity:0;transform:translateY(8px) scale(.995)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.auth-card.swap,.otp .cell.pop,.otp.bad,body.unlocking #auth,body.unlocking #auth .auth-card,body.unlocking #app{animation:none}body.unlocking #auth{display:none}}
 </style>
 </head>
 <body class="locked">
@@ -2213,9 +2234,26 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     document.body.classList.add('locked'); renderAuth();
     const f = $('#authform'); const first = f && (f.elements.email || f.elements.code); if (first) first.focus();
   }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let lastStep = null, otpPoll = 0;
+  /** Update the busy state in place (no re-render) so typed digits and focus survive. */
+  const setBusy = (b, label) => {
+    authSt.busy = b; const c = $('.auth-card'); if (!c) return; c.classList.toggle('busy', b);
+    const btn = c.querySelector('button.primary'); if (btn) { btn.disabled = b; if (label) btn.textContent = label; }
+    const i = c.querySelector('input'); if (i) i.readOnly = b;
+    c.querySelectorAll('.linkbtn').forEach(x => { x.disabled = b || (x.dataset.act === 'auth-resend' && authSt.wait > 0); });
+  };
+  const setMsg = t => { authSt.msg = t; const m = $('#auth-m'); if (m) m.textContent = t; };
+  /** Mirror the hidden input into the six cells (typing, paste, and iOS/Android autofill all land here). */
+  const syncOtp = i => {
+    const v = i.value = i.value.replace(/\D/g, '').slice(0, 6), cells = i.parentNode.querySelectorAll('.cell');
+    cells.forEach((c, k) => { const d = v[k] || ''; if (c.textContent !== d) { c.textContent = d; if (d) { c.classList.remove('pop'); void c.offsetWidth; c.classList.add('pop'); } } c.classList.toggle('on', k === Math.min(v.length, 5)); });
+    if (v.length === 6 && !authSt.busy) i.form.requestSubmit();
+  };
   function renderAuth() {
     const s = authSt, code = s.step === 'code';
-    $('#auth').innerHTML = `<div class="auth-card"><div class="appicon">${svg('sec', 26)}</div><h1 id="auth-t">Dakshin PayFlow</h1>
+    clearInterval(otpPoll);
+    $('#auth').innerHTML = `<div class="auth-card${lastStep !== s.step ? ' swap' : ''}"><div class="appicon">${svg('sec', 26)}</div><h1 id="auth-t">Dakshin PayFlow</h1>
       <p class="muted">${code ? `Enter the code sent to <b>${esc(s.email)}</b>.` : 'Sign in with a one-time code sent to your email.'}</p>
       <form id="authform" autocomplete="on" novalidate>
         ${code ? `<div class="f"><span id="otp-l">Verification code</span><div class="otp"><i class="cell on"></i>${'<i class="cell"></i>'.repeat(5)}<input name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" maxlength="6" aria-labelledby="otp-l" aria-describedby="auth-m"></div>${navigator.clipboard && navigator.clipboard.readText ? '<button type="button" class="linkbtn pastebtn" data-act="auth-paste">Paste code</button>' : ''}</div>
@@ -2225,58 +2263,31 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="primary" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Sending…' : 'Send code'}</button>`}
         <p id="auth-m" class="auth-msg" role="alert">${esc(s.msg)}</p></form>
       <p class="muted small">Access is limited to approved team members. Sessions end after 20 minutes of inactivity.</p></div>`;
+    lastStep = s.step;
+    if (code) { const inp = $('.otp input'); if (inp) otpPoll = setInterval(() => { if (!document.body.contains(inp)) return clearInterval(otpPoll); if (inp.value && inp.value.replace(/\D/g, '') !== [...inp.parentNode.querySelectorAll('.cell')].map(c => c.textContent).join('')) syncOtp(inp); }, 200); }
   }
   function startWait(n) { clearInterval(waitT); authSt.wait = n; waitT = setInterval(() => { authSt.wait--; if (authSt.wait <= 0) clearInterval(waitT); if (authSt.step === 'code' && !authSt.busy) { const b = $('[data-act=auth-resend]'); if (b) { b.disabled = authSt.wait > 0; b.textContent = authSt.wait > 0 ? `Resend in ${authSt.wait}s` : 'Resend code'; } } }, 1000); }
   async function sendCode(email) {
-    authSt.busy = true; authSt.msg = ''; authSt.email = email; renderAuth();
+    authSt.msg = ''; authSt.email = email; setBusy(true, 'Sending…'); setMsg('');
     try { await Cloud.auth.sendCode(email); authSt.step = 'code'; authSt.msg = 'If this address is approved, a code is on its way. It can take a minute.'; authSt.fails = 0; startWait(30); }
     catch (e) { console.error(e); authSt.msg = /rate|limit|seconds/i.test(e.message) ? 'Too many requests. Please wait a minute and try again.' : 'Could not send a code right now. Please try again.'; }
     authSt.busy = false; showAuth();
   }
   async function verifyCode(code) {
-    authSt.busy = true; authSt.msg = ''; renderAuth();
-    try { await Cloud.auth.verify(authSt.email, code); authSt.busy = false; await enter(); return; }
-    catch (e) {
-      console.error(e); authSt.busy = false; authSt.fails++;
-      if (authSt.fails >= 5) { authSt = { step: 'email', email: '', msg: 'Too many incorrect codes. Start again.', busy: false, wait: 0, fails: 0 }; } else authSt.msg = 'That code was not accepted. Check it and try again.';
+    setMsg(''); setBusy(true, 'Checking…');
+    try {
+      await Cloud.auth.verify(authSt.email, code);
+      const c = $('.auth-card'); if (c) { c.classList.add('ok'); const btn = c.querySelector('button.primary'); if (btn) btn.textContent = '✓ Verified'; }
+      await sleep(520); authSt.busy = false; await enter(); return;
+    } catch (e) {
+      console.error(e); authSt.fails++;
+      if (authSt.fails >= 5) { authSt = { step: 'email', email: '', msg: 'Too many incorrect codes. Start again.', busy: false, wait: 0, fails: 0 }; return showAuth(); }
+      setBusy(false, 'Verify and sign in'); const o = $('.otp'); if (o) o.classList.add('bad'); setMsg('That code was not accepted. Check it and try again.');
+      await sleep(420); const inp = $('.otp input');
+      if (o && inp) { o.classList.remove('bad'); inp.value = ''; o.querySelectorAll('.cell').forEach((c, k) => { c.textContent = ''; c.classList.toggle('on', k === 0); }); inp.focus(); }
     }
-    showAuth();
   }
-  /* six-digit entry: the real input sits invisibly over six cells; auto-submits on the sixth digit */
-  document.addEventListener('input', e => {
-    const i = e.target; if (!i.matches || !i.matches('.otp input')) return;
-    const v = i.value = i.value.replace(/\D/g, '').slice(0, 6), cells = i.parentNode.querySelectorAll('.cell');
-    cells.forEach((c, k) => { c.textContent = v[k] || ''; c.classList.toggle('on', k === Math.min(v.length, 5)); });
-    if (v.length === 6 && !authSt.busy) i.form.requestSubmit();
-  });
-  /* phone layout: every table with a header row becomes stacked "label: value" rows (labels come from the headers) */
-  let lblQ = 0;
-  const labelTables = () => {
-    lblQ = 0;
-    document.querySelectorAll('table:not(.rt)').forEach(t => {
-      const ths = [...t.querySelectorAll(':scope > thead th')]; if (!ths.length) return;
-      const hs = ths.map(h => h.textContent.trim()), rows = [...t.querySelectorAll(':scope > tbody > tr')];
-      if (!rows.length || rows.some(r => r.children.length !== hs.length)) return;
-      rows.forEach(r => [...r.children].forEach((c, k) => { c.dataset.l = hs[k]; if (!hs[k]) c.classList.add('nol'); }));
-      t.classList.add('rt');
-    });
-  };
-  new MutationObserver(() => { if (!lblQ) lblQ = requestAnimationFrame(labelTables); }).observe(document.body, { childList: true, subtree: true });
-  /* (i) hints: one popover at a time, anchored to its button, closes on outside tap / Escape */
-  let tipBtn = null;
-  const closeTip = () => { const t = document.getElementById('tip'); if (t) t.remove(); if (tipBtn) tipBtn.setAttribute('aria-expanded', 'false'); tipBtn = null; };
-  document.addEventListener('click', e => {
-    const b = e.target.closest && e.target.closest('button.info');
-    if (!b) { if (!(e.target.closest && e.target.closest('#tip'))) closeTip(); return; }
-    e.preventDefault(); const same = tipBtn === b; closeTip(); if (same) return;
-    const t = document.createElement('div'); t.id = 'tip'; t.setAttribute('role', 'status'); t.textContent = b.dataset.info; document.body.appendChild(t);
-    const r = b.getBoundingClientRect(), w = Math.min(320, innerWidth - 24); t.style.width = w + 'px';
-    const left = Math.max(12, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 12)), below = r.bottom + 8 + t.offsetHeight < innerHeight;
-    t.style.left = left + 'px'; t.style.top = (below ? r.bottom + 8 : Math.max(12, r.top - 8 - t.offsetHeight)) + 'px';
-    b.setAttribute('aria-expanded', 'true'); tipBtn = b;
-  });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTip(); });
-  addEventListener('scroll', closeTip, true); addEventListener('resize', closeTip);
+  ['input', 'change', 'keyup'].forEach(ev => document.addEventListener(ev, e => { const i = e.target; if (i.matches && i.matches('.otp input')) syncOtp(i); }));
   document.addEventListener('submit', e => {
     if (e.target.id !== 'authform') return; e.preventDefault();
     const f = e.target, s = authSt;
@@ -2299,11 +2310,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       const role = await Cloud.auth.role();
       if (!role) { await Cloud.auth.signOut(); authSt = { step: 'email', email: '', msg: 'This account is not approved for PayFlow.', busy: false, wait: 0, fails: 0 }; return showAuth(); }
       ui.role = role; ui.email = await Cloud.auth.email();
-      $('#auth').innerHTML = '<div class="auth-card"><p class="muted" style="text-align:center">Loading your data…</p></div>';
+      if ($('.auth-card')) setMsg('Loading your data…'); else $('#auth').innerHTML = '<div class="auth-card"><p class="muted" style="text-align:center">Loading your data…</p></div>';
       db = applyLocal(await Cloud.load()); Cloud.adopt(db);
       ui.tab = 'dash'; ui.gen.batch.refStart = db.refCounter; ui.gen.batch.date = todayISO();
-      document.body.classList.remove('locked'); $('#auth').innerHTML = '';
+      document.body.classList.add('unlocking'); document.body.classList.remove('locked');
       render(); armIdle(); audit('Signed in', ui.email);
+      setTimeout(() => { document.body.classList.remove('unlocking'); $('#auth').innerHTML = ''; lastStep = null; }, 360);
     } catch (e) {
       console.error(e); await Cloud.auth.signOut(); authSt = { step: 'email', email: '', msg: 'Could not load your data: ' + e.message, busy: false, wait: 0, fails: 0 }; showAuth();
     }
