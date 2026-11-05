@@ -356,6 +356,11 @@ button.info[aria-expanded=true]{background:var(--tint);color:#fff}
   .rt td{font-size:.9375rem}
 }
 @media(max-width:640px){.rt td{overflow-wrap:anywhere;min-width:0}.rt td>*{min-width:0}.bentools button,.bentools .btn{padding:0 10px;font-size:.9375rem;line-height:1.2}}
+
+.auth-card .f{gap:8px}.auth-card .pastebtn{justify-self:start;min-height:36px;margin:-2px 0 0 -8px}
+/* code entry: the real input is only a hidden capture layer over the six cells (beats the shared control style) */
+.auth-card .otp input[name=code]{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;outline:0!important;color:transparent!important;-webkit-text-fill-color:transparent!important;caret-color:transparent!important;font-size:16px!important;letter-spacing:0!important;opacity:1}
+.auth-card .otp input[name=code]::selection{background:transparent}
 </style>
 </head>
 <body class="locked">
@@ -2213,7 +2218,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     $('#auth').innerHTML = `<div class="auth-card"><div class="appicon">${svg('sec', 26)}</div><h1 id="auth-t">Dakshin PayFlow</h1>
       <p class="muted">${code ? `Enter the code sent to <b>${esc(s.email)}</b>.` : 'Sign in with a one-time code sent to your email.'}</p>
       <form id="authform" autocomplete="on" novalidate>
-        ${code ? `<div class="f"><span id="otp-l">Verification code</span><div class="otp"><i class="cell on"></i>${'<i class="cell"></i>'.repeat(5)}<input name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" maxlength="6" aria-labelledby="otp-l" aria-describedby="auth-m"></div></div>
+        ${code ? `<div class="f"><span id="otp-l">Verification code</span><div class="otp"><i class="cell on"></i>${'<i class="cell"></i>'.repeat(5)}<input name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" maxlength="6" aria-labelledby="otp-l" aria-describedby="auth-m"></div>${navigator.clipboard && navigator.clipboard.readText ? '<button type="button" class="linkbtn pastebtn" data-act="auth-paste">Paste code</button>' : ''}</div>
           <button class="primary" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Checking…' : 'Verify and sign in'}</button>
           <div class="row" style="justify-content:space-between"><button type="button" class="linkbtn" data-act="auth-back">Use a different email</button><button type="button" class="linkbtn" data-act="auth-resend" ${s.wait > 0 || s.busy ? 'disabled' : ''}>${s.wait > 0 ? `Resend in ${s.wait}s` : 'Resend code'}</button></div>`
         : `<label class="f">Email<input type="email" name="email" autocomplete="username" inputmode="email" value="${esc(s.email)}" placeholder="you@example.com" aria-describedby="auth-m"></label>
@@ -2282,6 +2287,10 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const t = e.target.closest('[data-act]'); if (!t) return; const a = t.dataset.act;
     if (a === 'auth-back') { authSt = { step: 'email', email: authSt.email, msg: '', busy: false, wait: 0, fails: 0 }; showAuth(); }
     else if (a === 'auth-resend' && authSt.wait <= 0) sendCode(authSt.email);
+    else if (a === 'auth-paste') {
+      navigator.clipboard.readText().then(t => { const i = $('.otp input'), d = String(t || '').replace(/\D/g, '').slice(0, 6); if (i && d) { i.value = d; i.dispatchEvent(new Event('input', { bubbles: true })); } else toast('No code found on the clipboard.', true); })
+        .catch(() => toast('Allow paste, or long-press the boxes and choose Paste.', true));
+    }
     else if (a === 'signout') { audit('Signed out').finally(() => lock('You have been signed out.')); }
   });
 
