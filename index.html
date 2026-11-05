@@ -341,6 +341,21 @@ button.info[aria-expanded=true]{background:var(--tint);color:#fff}
 @keyframes tipin{from{opacity:0;transform:translateY(4px) scale(.98)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){#tip{animation:none}}
 .card h2 button.info{vertical-align:-5px}
+
+/* settings: template + date-format row aligned on one baseline */
+.tplgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 20px;align-items:end}
+.tplgrid .f{display:grid;gap:6px;align-content:end}
+.tplgrid .cap{font-size:.8125rem;font-weight:500;color:var(--label2)}
+.tplrow{display:flex;align-items:center;gap:0;flex-wrap:nowrap}.tplrow .btn{flex:1 1 auto;min-width:0}
+@media(max-width:900px){.tplgrid{grid-template-columns:1fr}}
+@media(max-width:640px){
+  .bentools{display:grid!important;grid-template-columns:1fr 1fr;gap:10px}
+  .bentools input{grid-column:1/-1;min-width:0!important}
+  .bentools button,.bentools .btn{width:100%}
+  .rt td.nol::before{display:none}.rt td.nol{justify-content:flex-end}
+  .rt td{font-size:.9375rem}
+}
+@media(max-width:640px){.rt td{overflow-wrap:anywhere;min-width:0}.rt td>*{min-width:0}.bentools button,.bentools .btn{padding:0 10px;font-size:.9375rem;line-height:1.2}}
 </style>
 </head>
 <body class="locked">
@@ -1365,7 +1380,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     dock.innerHTML = `<div class="dock-in">
       <details class="issues"><summary class="stats" aria-label="Summary. Click for details"><span><b>${res.rows.length}</b> payment${res.rows.length === 1 ? '' : 's'}</span><span class="dot">·</span><span><b>${inr(res.total)}</b></span><span class="dot">·</span>
         <span>${zc(res.errors.length, 'bad')} blocking</span><span class="dot">·</span><span>${zc(res.warnings.length, 'warn')} warnings</span></summary>
-        <div class="pop">${res.errors.length ? `<b>Fix before export</b><ul>${res.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>${res.errors.some(e => /bank details missing/.test(e)) ? '<button class="sm" data-tab="ben">Open Beneficiaries to import bank details</button>' : ''}` : ''}
+        <div class="pop">${res.errors.length ? `<b>Fix before export</b><ul>${[...new Set(res.errors)].map(e => `<li>${esc(e)}</li>`).join('')}</ul>${res.errors.some(e => /bank details missing/.test(e)) ? '<button class="sm" data-tab="ben">Open Beneficiaries to import bank details</button>' : ''}` : ''}
         ${res.warnings.length ? `<b>Review</b><ul>${res.warnings.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : ''}
         ${!res.errors.length && !res.warnings.length ? 'No issues found.' : ''}</div></details>
       <div class="btns"><button data-act="export" data-k="csv" ${ok ? '' : 'disabled'}>Download CSV</button>
@@ -1429,7 +1444,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const unreg = db.beneficiaries.filter(b => !b.registered && b.account).length, stubs = db.beneficiaries.filter(b => !b.account).length;
     const al = Object.entries(db.aliases).map(([k, id]) => [k, db.beneficiaries.find(b => b.id === id)]).filter(([, b]) => b);
     return `${head('Beneficiaries', 'Saved bank details for suppliers and staff. Account numbers are masked by default.')}
-      <section class="card"><div class="row">
+      <section class="card"><div class="row bentools">
       <input type="search" id="bq" placeholder="Search name, account, IFSC, nickname…" value="${esc(ui.q)}" style="flex:1;min-width:220px">
       <button data-act="ben-add">Add</button>
       <label class="btn">Import bank details<input hidden type="file" id="benfile" accept=".xlsx,.xls,.csv"></label>
@@ -1499,11 +1514,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <label class="f">Account number<input type="text" name="number" inputmode="numeric" required autocomplete="off"></label>
         <label class="f">Outlet tags (e.g. DT1)<input type="text" name="tags" placeholder="DT1"></label>
         <button class="primary" type="submit">Add account</button></form></section>
-    <section class="card"><h2>Bank templates${info('Confirm the date format against one accepted bank upload before relying on it.')}</h2><div class="grid">
-      <div><label class="btn">Upload payment template<input hidden type="file" data-tpl="pay" accept=".xlsx,.xls,.csv"></label>${info(tp ? `Using “${tp.sheetName}” · ${tp.headers.length} columns (column order preserved).` : 'Using the built-in 31-column layout (matches your Salary Payment template).')}</div>
-      <div><label class="btn">Upload beneficiary template<input hidden type="file" data-tpl="ben" accept=".xlsx,.xls,.csv"></label>${info(tb ? `Using “${tb.sheetName}” · ${tb.headers.length} columns.` : 'Using the built-in beneficiary layout.')}</div>
-      <label class="f">Date format in the payment file<select data-set="dateFormat">
-        ${[['dd/mm/yyyy', 'dd/mm/yyyy (text)'], ['dd-mm-yyyy', 'dd-mm-yyyy (text)'], ['yyyy-mm-dd', 'yyyy-mm-dd (text)'], ['excel', 'Excel date serial']].map(([v, t]) => `<option value="${v}" ${s.dateFormat === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div></section>
+    <section class="card"><h2>Bank templates${info('Confirm the date format against one accepted bank upload before relying on it.')}</h2><div class="tplgrid">
+      <div class="f"><span class="cap">Payment template</span><div class="row tplrow"><label class="btn">Upload payment template<input hidden type="file" data-tpl="pay" accept=".xlsx,.xls,.csv"></label>${info(tp ? `Using “${tp.sheetName}” · ${tp.headers.length} columns (column order preserved).` : 'Using the built-in 31-column layout (matches your Salary Payment template).')}</div></div>
+      <div class="f"><span class="cap">Beneficiary template</span><div class="row tplrow"><label class="btn">Upload beneficiary template<input hidden type="file" data-tpl="ben" accept=".xlsx,.xls,.csv"></label>${info(tb ? `Using “${tb.sheetName}” · ${tb.headers.length} columns.` : 'Using the built-in beneficiary layout.')}</div></div>
+      <label class="f"><span class="cap">Date format in the payment file</span><select data-set="dateFormat">
+        ${[['dd/mm/yyyy', 'dd/mm/yyyy (text)'], ['dd-mm-yyyy', 'dd-mm-yyyy (text)'], ['yyyy-mm-dd', 'yyyy-mm-dd (text)'], ['excel', 'Excel date serial']].map(([v, t]) => `<option value="${v}" ${s.dateFormat === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
+    </section>
     <section class="card"><h2>Data${info('Your data is saved to your protected cloud account. A backup is an extra copy for safekeeping and contains bank details — keep it private.')}</h2><div class="row">
       <button data-act="backup">Download backup (.json)</button>
       ${ui.role === 'admin' ? '<label class="btn">Restore backup<input hidden type="file" id="restore" accept=".json"></label>\n      <button class="danger" data-act="reset">Erase all data</button>' : ''}</div></section>`;
@@ -2228,6 +2244,19 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     cells.forEach((c, k) => { c.textContent = v[k] || ''; c.classList.toggle('on', k === Math.min(v.length, 5)); });
     if (v.length === 6 && !authSt.busy) i.form.requestSubmit();
   });
+  /* phone layout: every table with a header row becomes stacked "label: value" rows (labels come from the headers) */
+  let lblQ = 0;
+  const labelTables = () => {
+    lblQ = 0;
+    document.querySelectorAll('table:not(.rt)').forEach(t => {
+      const ths = [...t.querySelectorAll(':scope > thead th')]; if (!ths.length) return;
+      const hs = ths.map(h => h.textContent.trim()), rows = [...t.querySelectorAll(':scope > tbody > tr')];
+      if (!rows.length || rows.some(r => r.children.length !== hs.length)) return;
+      rows.forEach(r => [...r.children].forEach((c, k) => { c.dataset.l = hs[k]; if (!hs[k]) c.classList.add('nol'); }));
+      t.classList.add('rt');
+    });
+  };
+  new MutationObserver(() => { if (!lblQ) lblQ = requestAnimationFrame(labelTables); }).observe(document.body, { childList: true, subtree: true });
   /* (i) hints: one popover at a time, anchored to its button, closes on outside tap / Escape */
   let tipBtn = null;
   const closeTip = () => { const t = document.getElementById('tip'); if (t) t.remove(); if (tipBtn) tipBtn.setAttribute('aria-expanded', 'false'); tipBtn = null; };
