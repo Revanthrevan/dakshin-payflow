@@ -621,7 +621,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     'beneficiary name': 'name', 'beneficiary account number': 'account', 'beneficiary ifsc code': 'ifsc',
     'transaction date': 'date', 'payment mode': 'mode', 'customer reference number': 'ref',
     'beneficiary nickname/code': 'nickname', 'beneficiary type': 'benType', 'debit narration': 'debitNarration',
-    'credit narration': 'creditNarration', 'invoice number': 'invoice'
+    'credit narration': 'creditNarration', 'invoice number': 'invoice',
+    // Axis "Beneficiary Management Report" export
+    'ifsc code': 'ifsc', 'beneficiary code': 'nickname'
   };
   C.fieldOf = h => FIELDS[clean(h)] || null;
 
@@ -773,7 +775,10 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     }
     if (hi < 0) return { items: [], warnings: ['Header row not found (need Beneficiary Name, Account Number, IFSC Code).'] };
     const items = [], warnings = [], ifscRe = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-    rows.slice(hi + 1).forEach((r, k) => {
+    // bank reports end with a summary block ("Total Request …"); stop there
+    let end = rows.findIndex((r, i) => i > hi && /^total\b/i.test(String((r || [])[map.name] == null ? '' : r[map.name]).trim()));
+    if (end < 0) end = rows.length;
+    rows.slice(hi + 1, end).forEach((r, k) => {
       const name = String(r[map.name] == null ? '' : r[map.name]).trim();
       const acct = C.acctStr(r[map.account]);
       const ifsc = String(r[map.ifsc] == null ? '' : r[map.ifsc]).replace(/\s/g, '').toUpperCase();
@@ -788,7 +793,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         benType: map.benType != null ? String(r[map.benType] == null ? '' : r[map.benType]).trim() : ''
       });
     });
-    const nums = rows.slice(hi + 1).filter(r => typeof r[map.account] === 'number').length;
+    const nums = rows.slice(hi + 1, end).filter(r => typeof r[map.account] === 'number').length;
     if (nums) warnings.unshift(`${nums} account number${nums > 1 ? 's are' : ' is'} stored as a number in this file, so any leading zeros are lost. Compare those with your bank's beneficiary screen and fix them with Edit.`);
     return { items, warnings };
   };
