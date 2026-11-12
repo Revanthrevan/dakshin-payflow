@@ -1683,7 +1683,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const statusLabel = h => (h.status === 'Generated' ? 'Pending verification' : h.status);
   const statusCls = h => (isDone(h) ? 'ok' : h.status === 'Needs attention' ? 'bad' : 'warn');
   const typeLabel = h => (/sal/i.test(h.type) ? 'Monthly salary' : 'Weekly suppliers');
-  const outletOf = r => [].concat(r.outlets || []).filter(Boolean).join(' + ') || 'Unassigned';
+  const outletOf = r => [].concat(r.outlets || []).filter(Boolean).join(' + ') || 'No outlet tag';
   const money = v => (v >= 1e7 ? (v / 1e7).toFixed(1).replace(/\.0$/, '') + 'Cr' : v >= 1e5 ? (v / 1e5).toFixed(1).replace(/\.0$/, '') + 'L' : v >= 1e3 ? (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(Math.round(v)));
   const inRange = (h, f, t) => { const d = genDate(h); return d >= f && d <= t; };
 
@@ -2309,7 +2309,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const s = authSt, code = s.step === 'code';
     clearInterval(otpPoll);
     $('#auth').innerHTML = `<div class="auth-card${lastStep !== s.step ? ' swap' : ''}"><div class="appicon">${svg('sec', 26)}</div><h1 id="auth-t">Dakshin PayFlow</h1>
-      <p class="muted">${code ? `Enter the code sent to <b>${esc(s.email)}</b>.` : 'Sign in with a one-time code sent to your email.'}</p>
+      <p class="muted">${code ? `Code requested for <b>${esc(s.email)}</b>. Not your address? Use a different email below.` : 'Sign in with a one-time code sent to your email.'}</p>
       <form id="authform" autocomplete="on" novalidate>
         ${code ? `<div class="f"><span id="otp-l">Verification code</span><div class="otp"><i class="cell on"></i>${'<i class="cell"></i>'.repeat(5)}<input name="code" inputmode="numeric" pattern="[0-9]*" autocomplete="one-time-code" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" maxlength="6" aria-labelledby="otp-l" aria-describedby="auth-m"></div>${navigator.clipboard && navigator.clipboard.readText ? '<button type="button" class="linkbtn pastebtn" data-act="auth-paste">Paste code</button>' : ''}</div>
           <button class="primary" type="submit" ${s.busy ? 'disabled' : ''}>${s.busy ? 'Checking…' : 'Verify and sign in'}</button>
@@ -2324,7 +2324,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   function startWait(n) { clearInterval(waitT); authSt.wait = n; waitT = setInterval(() => { authSt.wait--; if (authSt.wait <= 0) clearInterval(waitT); if (authSt.step === 'code' && !authSt.busy) { const b = $('[data-act=auth-resend]'); if (b) { b.disabled = authSt.wait > 0; b.textContent = authSt.wait > 0 ? `Resend in ${authSt.wait}s` : 'Resend code'; } } }, 1000); }
   async function sendCode(email) {
     authSt.msg = ''; authSt.email = email; setBusy(true, 'Sending…'); setMsg('');
-    try { await Cloud.auth.sendCode(email); authSt.step = 'code'; authSt.msg = 'If this address is approved, a code is on its way. It can take a minute.'; authSt.fails = 0; startWait(30); }
+    try { await Cloud.auth.sendCode(email); authSt.step = 'code'; authSt.msg = 'A code is sent only if this address is approved. Nothing after a minute? Check the spelling, or choose “Use a different email”.'; authSt.fails = 0; startWait(30); }
     catch (e) { console.error(e); authSt.msg = /rate|limit|seconds/i.test(e.message) ? 'Too many requests. Please wait a minute and try again.' : 'Could not send a code right now. Please try again.'; }
     authSt.busy = false; showAuth();
   }
