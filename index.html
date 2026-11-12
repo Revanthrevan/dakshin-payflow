@@ -1160,7 +1160,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   let auditQ = Promise.resolve();
   function audit(event, detail = '') {
     auditQ = auditQ.then(async () => {
-      const row = await Cloud.audit.log(event, detail);
+      // Transient network failures (mobile signal drops, Safari "Load failed") are retried before giving up.
+      let row, err;
+      for (let i = 0; i < 4 && !row; i++) {
+        try { row = await Cloud.audit.log(event, detail); }
+        catch (e) { err = e; if (!/load failed|failed to fetch|network|timed out/i.test(String(e.message))) break; await new Promise(r => setTimeout(r, 1500 * (i + 1))); }
+      }
+      if (!row) throw err;
       db.audit.unshift(row); if (db.audit.length > 500) db.audit.length = 500;
       if (ui.tab === 'sec') render();
     }).catch(e => { console.error('audit', e); toast('Audit log could not be written: ' + e.message, true); });
