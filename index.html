@@ -1083,17 +1083,26 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const a = db.accounts.find(x => (x.tags || []).includes(tag)) || db.accounts.find(x => x.id === db.settings.defaultAccountId) || db.accounts[0];
     return a ? a.id : null;
   };
-  /** Debit account a vendor is normally paid from (learned from the bank report). */
-  const vendorAcct = ben => {
-    if (!ben) return null; const m = db.settings.vendorDebit || {};
-    for (const n of [...(ben.nicknames || []), ben.name]) { const k = C.normCode(n), hit = Object.keys(m).find(x => C.codeEq(x, k)); if (hit) { const a = db.accounts.find(x => String(x.number) === m[hit]); if (a) return a.id; } }
+  /** Debit account a vendor is normally paid from. Learned per outlet (key@DT1 / key@DT2); the outlet on the report line always wins over a different outlet's account. */
+  const vendorAcct = (ben, tag) => {
+    if (!ben) return null; const m = db.settings.vendorDebit || {}, accOf = num => db.accounts.find(x => String(x.number) === num);
+    for (const n of [...(ben.nicknames || []), ben.name]) {
+      const k = C.normCode(n); if (!k) continue;
+      if (tag) {
+        const th = Object.keys(m).find(x => x.endsWith('@' + tag) && C.codeEq(x.slice(0, -(tag.length + 1)), k)), ta = th && accOf(m[th]); if (ta) return ta.id;
+      }
+      const hit = Object.keys(m).find(x => !x.includes('@') && C.codeEq(x, k)), a = hit && accOf(m[hit]);
+      if (a && (!tag || !(a.tags || []).length || a.tags.includes(tag))) return a.id;   // a DT2-only vendor account is not used for a DT1 line
+    }
     return null;
   };
-  /** Remember which account pays this beneficiary, so the next batch pre-selects it. */
-  const learnDebit = (benId, accId) => {
+  /** Remember which account pays this beneficiary (for this outlet), so the next batch pre-selects it. */
+  const learnDebit = (benId, accId, tag) => {
     const b = db.beneficiaries.find(x => x.id === benId), a = db.accounts.find(x => x.id === accId); if (!b || !a) return false;
     const keys = (b.nicknames && b.nicknames.length ? b.nicknames : [b.name]).map(C.normCode).filter(Boolean), m = db.settings.vendorDebit = db.settings.vendorDebit || {};
-    let changed = false; keys.forEach(k => { const hit = Object.keys(m).find(x => C.codeEq(x, k)) || k; if (m[hit] !== String(a.number)) { m[hit] = String(a.number); changed = true; } });
+    let changed = false;
+    const put = (base, suffix) => { const hit = Object.keys(m).find(x => (suffix ? x.endsWith(suffix) : !x.includes('@')) && C.codeEq(suffix ? x.slice(0, -suffix.length) : x, base)) || base + suffix; if (m[hit] !== String(a.number)) { m[hit] = String(a.number); changed = true; } };
+    keys.forEach(k => { if (tag) put(k, '@' + tag); else put(k, ''); });
     return changed;
   };
   const NARR = { supplier: 'Supplier payment {date}', salary: 'Salary {month}' };
@@ -1349,7 +1358,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       return {
         id: i, outlet: p.outlet || '', tag, source: p.source, purchase: p.purchase, paid: p.paid, pending: p.pending,
         amount: p.pending > 0 ? C.round2(p.pending) : 0, include: p.pending > 0, benId: m.id, kind: m.kind, score: m.score,
-        confirmed: m.kind === 'alias' || m.kind === 'auto', accountId: vendorAcct(db.beneficiaries.find(b => b.id === m.id)) || pickAccount(tag)
+        confirmed: m.kind === 'alias' || m.kind === 'auto', accountId: vendorAcct(db.beneficiaries.find(b => b.id === m.id), tag) || pickAccount(tag)
       };
     });
   }
@@ -1420,7 +1429,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   function setBen(l, id, kind) {
     l.benId = id; l.kind = kind; l.confirmed = !!id;
-    const va = id && vendorAcct(db.beneficiaries.find(b => b.id === id)); if (va) l.accountId = va;
+    const va = id && vendorAcct(db.beneficiaries.find(b => b.id === id), l.tag); if (va) l.accountId = va;
     if (id) {
       const k = C.norm(l.source);
       if (k) db.aliases[k] = id;
@@ -1444,7 +1453,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       id: C.uid(), ts: new Date().toISOString(), type: g.type, report: g.file, file: files.join(', '), iso: b.date, kind,
       total: res.total, count: res.rows.length, headers, sheet, status: 'Generated', rows: res.rows
     });
-    g.lines.filter(l => l.include && l.benId && l.confirmed).forEach(l => { learnDebit(l.benId, l.accountId); const k = C.norm(l.source); if (k && !db.aliases[k]) db.aliases[k] = l.benId; });
+    g.lines.filter(l => l.include && l.benId && l.confirmed).forEach(l => { learnDebit(l.benId, l.accountId, l.tag); const k = C.norm(l.source); if (k && !db.aliases[k]) db.aliases[k] = l.benId; });
     db.refCounter = maxRef + 1; b.refStart = db.refCounter; save();
     audit('Payment file generated', `${res.rows.length} payments · ${inr(res.total)} · ${g.type} · ${files.join(', ')}`);
     toast(`${files.length} file${files.length > 1 ? 's' : ''} downloaded · next reference ${db.refCounter}`);
@@ -1831,8 +1840,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
   const isPickable = el => el && el.matches && !el.disabled && (el.matches('select') || el.matches('input[type=date]'));
   const openFor = el => (el.matches('select') ? openSelect(el) : openDatePicker(el));
+  // iOS Safari opens its own menu on tap even when click is cancelled: take over at touchend (tap = <10px, <600ms), and ignore the synthesized click.
+  let lastOpen = 0, tap = null;
+  const openOnce = el => { const t = Date.now(); if (t - lastOpen < 500) return; lastOpen = t; openFor(el); };
   document.addEventListener('mousedown', e => { if (isPickable(e.target)) e.preventDefault(); }, true);
-  document.addEventListener('click', e => { if (isPickable(e.target)) { e.preventDefault(); openFor(e.target); } }, true);
+  document.addEventListener('touchstart', e => { const t = e.touches[0]; tap = isPickable(e.target) && e.touches.length === 1 ? { el: e.target, x: t.clientX, y: t.clientY, at: Date.now() } : null; }, { capture: true, passive: true });
+  document.addEventListener('touchend', e => {
+    const r = tap; tap = null; if (!r || !isPickable(r.el)) return; const t = e.changedTouches[0];
+    if (Math.hypot(t.clientX - r.x, t.clientY - r.y) < 10 && Date.now() - r.at < 600 && e.cancelable) { e.preventDefault(); openOnce(r.el); }
+  }, { capture: true, passive: false });
+  document.addEventListener('click', e => { if (isPickable(e.target)) { e.preventDefault(); openOnce(e.target); } }, true);
   document.addEventListener('keydown', e => { if (isPickable(e.target) && ['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); openFor(e.target); } }, true);
 
   function openPicker() {
@@ -2175,7 +2192,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     else if (t.dataset.f) {
       const tr = t.closest('tr'), l = g.lines[+tr.dataset.i];
       if (t.dataset.f === 'include') { l.include = t.checked; tr.classList.toggle('off', !l.include); }
-      else if (t.dataset.f === 'acct') { l.accountId = t.value; if (l.benId && learnDebit(l.benId, l.accountId)) save(); }
+      else if (t.dataset.f === 'acct') { l.accountId = t.value; if (l.benId && learnDebit(l.benId, l.accountId, l.tag)) save(); }
       else if (t.dataset.f === 'amount') l.amount = C.round2(parseFloat(t.value) || 0);
       else if (t.dataset.f === 'ben') {
         const id = labelToId.get(t.value);
