@@ -1465,6 +1465,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     refresh();
     const g = ui.gen, b = g.batch, res = g.res;
     if (!res.rows.length || res.errors.length) return toast('Resolve blocking issues first.', true);
+    // Duplicate guard: same beneficiary account, amount and payment date already in an earlier file (unless the bank failed it).
+    const cents = n => Math.round(n * 100), seen = new Map();
+    db.history.forEach(h => h.rows.forEach(r => { if (r.bank && /Failed|Missing/.test(r.bank.status)) return; const k = `${r.iso}|${cents(r.amount)}|${r.account}`; if (!seen.has(k)) seen.set(k, h); }));
+    const dups = res.rows.filter(r => seen.has(`${r.iso}|${cents(r.amount)}|${r.account}`));
+    if (dups.length) {
+      const f = seen.get(`${dups[0].iso}|${cents(dups[0].amount)}|${dups[0].account}`), t = new Date(f.ts).toLocaleString('en-IN');
+      const list = dups.slice(0, 5).map(r => `• ${r.name} ${inr(r.amount)}`).join('\n') + (dups.length > 5 ? `\n…and ${dups.length - 5} more` : '');
+      if (!confirm(`Possible duplicate: ${dups.length} of ${res.rows.length} payments already appear in a file generated on ${t} for the same date.\n\n${list}\n\nPaying twice sends the money twice. Download anyway?`)) return toast('Download cancelled — nothing was generated.', true);
+      audit('Duplicate warning overridden', `${dups.length} of ${res.rows.length} payments · ${g.file || g.type}`);
+    }
     if (!(await gate('Download payment file'))) return toast('Download cancelled.', true);
     const pt = db.settings.templatePay, headers = pt ? pt.headers : C.PAY_HEADERS, sheet = (pt ? pt.sheetName : 'Default - Across All Banks').slice(0, 31);
     const d = new Date(), stamp = `${b.date.replace(/-/g, '')}_${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}`;
