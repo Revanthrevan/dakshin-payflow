@@ -1683,6 +1683,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const statusLabel = h => (h.status === 'Generated' ? 'Pending verification' : h.status);
   const statusCls = h => (isDone(h) ? 'ok' : h.status === 'Needs attention' ? 'bad' : 'warn');
   const typeLabel = h => (/sal/i.test(h.type) ? 'Monthly salary' : 'Weekly suppliers');
+  const acctOf = r => { const a = db.accounts.find(x => String(x.number) === String(r.debitAccount)); return a ? a.label : (r.debitAccount ? '…' + String(r.debitAccount).slice(-4) : 'Unknown account'); };
   const outletOf = r => [].concat(r.outlets || []).filter(Boolean).join(' + ') || 'No outlet tag';
   const money = v => (v >= 1e7 ? (v / 1e7).toFixed(1).replace(/\.0$/, '') + 'Cr' : v >= 1e5 ? (v / 1e5).toFixed(1).replace(/\.0$/, '') + 'L' : v >= 1e3 ? (v / 1e3).toFixed(1).replace(/\.0$/, '') + 'K' : String(Math.round(v)));
   const inRange = (h, f, t) => { const d = genDate(h); return d >= f && d <= t; };
@@ -1807,7 +1808,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const total = list.reduce((s, h) => s + h.total, 0), pays = list.reduce((s, h) => s + h.count, 0), pend = list.filter(h => h.status === 'Generated' || h.status === 'Uploaded'), attn = list.filter(h => h.status === 'Needs attention');
     const delta = prevTotal ? Math.round((total - prevTotal) / prevTotal * 100) : null;
     const byOutlet = new Map(), byPayee = new Map();
-    list.forEach(h => h.rows.forEach(r => { byOutlet.set(outletOf(r), (byOutlet.get(outletOf(r)) || 0) + r.amount); byPayee.set(r.name, (byPayee.get(r.name) || 0) + r.amount); }));
+    list.forEach(h => h.rows.forEach(r => { byOutlet.set(acctOf(r), (byOutlet.get(acctOf(r)) || 0) + r.amount); byPayee.set(r.name, (byPayee.get(r.name) || 0) + r.amount); }));
     const bk = makeBuckets(f, t, list); dashCache = { bk, list };
     if (d.sel != null && !bk[d.sel]) d.sel = null;
     return `${head('Dashboard', 'Payment files generated, at a glance.')}${banners()}
@@ -1822,7 +1823,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       ${kitHtml(list, total)}
       <div class="dgrid"><section class="card"><h2>Amount by ${n <= 31 ? 'day' : n <= 180 ? 'week' : 'month'}</h2><div class="chartwrap"><div class="chart" id="chart">${chartSvg(bk)}</div><div class="tt" id="tt" role="presentation"></div></div>
         <p class="muted" style="margin:8px 0 0">Select a bar to filter the reports below.</p></section>
-        <section class="card"><h2>By outlet</h2>${hbars(byOutlet, 'No payments in this range.')}<h2 style="margin-top:18px">Top payees</h2>${hbars(byPayee, 'No payments in this range.')}</section></div>
+        <section class="card"><h2>By debit account${info('Which of your bank accounts the money is paid from. A vendor named dt1 / dt2 uses that outlet’s account; vendors with no tag use the default account.')}</h2>${hbars(byOutlet, 'No payments in this range.')}<h2 style="margin-top:18px">Top payees</h2>${hbars(byPayee, 'No payments in this range.')}</section></div>
       <section class="card" id="reps">${repsHtml()}</section>`;
   }
   const paintReps = () => { const el = $('#reps'); if (el) el.innerHTML = repsHtml(); };
@@ -1897,7 +1898,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   function openExpand(id) {
     const h = db.history.find(x => x.id === id); if (!h) return;
     ui.dash.exp = id; const dlg = $('#dlg2'); dlg.className = 'full'; dlg.onclose = () => { ui.dash.exp = null; dlg.onclose = null; };
-    const by = new Map(); h.rows.forEach(r => by.set(outletOf(r), (by.get(outletOf(r)) || 0) + r.amount));
+    const by = new Map(); h.rows.forEach(r => by.set(acctOf(r), (by.get(acctOf(r)) || 0) + r.amount));
     dlg.innerHTML = `<div class="pk-h" style="grid-template-columns:1fr 44px"><div style="padding:0 8px"><h3 style="text-align:left">${esc(h.report || typeLabel(h))}</h3><span class="muted">${typeLabel(h)} · generated ${esc(new Date(h.ts).toLocaleString('en-IN'))} · pay date ${esc(h.iso)}</span></div>
       <button class="icon" data-act="x-close" aria-label="Close">${svg('x', 20)}</button></div>
       <div class="pk-b" style="padding-top:14px"><div class="kpis" style="margin-bottom:12px">
