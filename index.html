@@ -382,6 +382,23 @@ body.unlocking #app{visibility:visible;animation:appin .5s var(--ease) both}
 @keyframes cardout{to{opacity:0;transform:scale(.97) translateY(-6px)}}
 @keyframes appin{from{opacity:0;transform:translateY(8px) scale(.995)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){.auth-card.swap,.otp .cell.pop,.otp.bad,body.unlocking #auth,body.unlocking #auth .auth-card,body.unlocking #app{animation:none}body.unlocking #auth{display:none}}
+
+/* History: card rows on phones, actions as a wrapping button group (44pt targets via pointer:coarse) */
+@media(max-width:760px){
+  .rt.hist td.acts{justify-content:flex-start;flex-wrap:wrap;gap:8px;padding-top:10px}
+  .rt td.acts::before{display:none}
+  .rt.hist td.acts button.sm{flex:1 1 auto;min-width:72px}
+  .rt td[data-l="Source"] .src{display:flex;flex-direction:column;align-items:flex-end;min-width:0;overflow-wrap:anywhere}
+  .rt td[data-l="Report lines"],.rt td[data-l="Source"]{align-items:flex-start}
+  tr.hist-d{padding:0;border-bottom:0}
+  tr.hist-d>td{padding:0}
+  tr.hist-d .rt tr{background:var(--fill);border-radius:12px;margin:8px 0;border-bottom:0}
+}
+@media(max-width:760px){
+  tr.hist-d>td{display:block;padding:0 0 8px}
+  tr.hist-d .rt{width:100%}
+  .rt td.mono{white-space:nowrap}
+}
 </style>
 </head>
 <body class="locked">
@@ -1589,12 +1606,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const h0 = head('History', 'Every payment file you have generated. Entries are append-only.');
     if (!db.history.length) return `${h0}<section class="card"><p class="muted" style="text-align:center;padding:24px 0">No payment files generated yet.</p></section>`;
     return `${h0}<section class="card"><div class="row" style="justify-content:flex-end"><button data-act="hist-csv">Export audit CSV</button></div>
-      <div class="scroll" style="margin-top:12px;max-height:none"><table><thead><tr><th>Generated</th><th>Type</th><th>Pay date</th><th class="num">Payments</th><th class="num">Total</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>
-      ${db.history.map(h => `<tr><td>${esc(new Date(h.ts).toLocaleString('en-IN'))}</td><td>${esc(h.type)}</td><td>${esc(h.iso)}</td><td class="num">${h.count}</td><td class="num">${inr(h.total)}</td><td>${esc(h.report || '')}<small>${esc(h.file)}</small></td>
-      <td><span class="chip ${statusCls(h)}">${esc(statusLabel(h))}</span></td>
-      <td class="num"><button class="sm" data-act="hist-open" data-id="${h.id}">${ui.openHist === h.id ? 'Hide' : 'Details'}</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
+      <div class="scroll" style="margin-top:12px;max-height:none"><table class="rt hist"><thead><tr><th>Generated</th><th>Type</th><th>Pay date</th><th class="num">Payments</th><th class="num">Total</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>
+      ${db.history.map(h => `<tr><td data-l="Generated">${esc(new Date(h.ts).toLocaleString('en-IN'))}</td><td data-l="Type">${esc(h.type)}</td><td data-l="Pay date">${esc(h.iso)}</td><td class="num" data-l="Payments">${h.count}</td><td class="num" data-l="Total">${inr(h.total)}</td><td data-l="Source"><span class="src">${esc(h.report || '')}<small>${esc(h.file)}</small></span></td>
+      <td data-l="Status"><span class="chip ${statusCls(h)}">${esc(statusLabel(h))}</span></td>
+      <td class="num acts"><button class="sm" data-act="hist-open" data-id="${h.id}">${ui.openHist === h.id ? 'Hide' : 'Details'}</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
       ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}</td></tr>
-      ${ui.openHist === h.id ? `<tr><td colspan="8"><table><thead><tr><th>Ref</th><th>Beneficiary</th><th>Account</th><th class="num">Amount</th><th>Mode</th><th>Bank result</th><th>From report lines</th></tr></thead><tbody>${h.rows.map(r => `<tr><td>${r.ref}</td><td>${esc(r.name)}</td><td class="mono">${esc('•'.repeat(Math.max(0, r.account.length - 4)) + r.account.slice(-4))}</td><td class="num">${inr(r.amount)}</td><td>${r.mode}</td><td>${r.bank ? esc(r.bank.status + (r.bank.utr ? ' · ' + r.bank.utr : '')) : '—'}</td><td>${esc((r.sources || []).join('; '))}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
+      ${ui.openHist === h.id ? `<tr class="hist-d"><td colspan="8"><table class="rt"><thead><tr><th>Ref</th><th>Beneficiary</th><th>Account</th><th class="num">Amount</th><th>Mode</th><th>Bank result</th><th>From report lines</th></tr></thead><tbody>${h.rows.map(r => `<tr><td data-l="Ref">${r.ref}</td><td data-l="Beneficiary">${esc(r.name)}</td><td class="mono" data-l="Account">${esc('•'.repeat(Math.max(0, r.account.length - 4)) + r.account.slice(-4))}</td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Mode">${r.mode}</td><td data-l="Bank result">${r.bank ? esc(r.bank.status + (r.bank.utr ? ' · ' + r.bank.utr : '')) : '—'}</td><td data-l="Report lines">${esc((r.sources || []).join('; '))}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
       </tbody></table></div></section>`;
   }
 
