@@ -122,6 +122,7 @@ td input,td select{min-height:36px}
 td.c-ben{min-width:260px}
 td small{display:block;color:var(--label2);font-size:12px}
 small.cnt{font-size:12px;color:var(--label2);font-variant-numeric:tabular-nums}small.cnt.over{color:var(--warn)}
+tr.split td{color:var(--label2);font-size:13px;border-top:0;padding-top:2px;padding-bottom:6px}
 td small.mg{margin-top:4px;color:var(--tint-t);font-weight:600}
 tr.off{opacity:.45}
 .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:13px}
@@ -863,6 +864,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   };
   C.fillNarration = (t, iso, outlets) => C.expandNarration(t, iso, outlets).slice(0, C.NARR_MAX).trim();
 
+  /** Restaurant/company name from a report "Restaurant Name" (DT1/DT2 branch tags dropped). */
+  C.companyOf = outlet => String(outlet || '').replace(/(^|[^a-z0-9])dt\s*[12](?!\d)/gi, ' ').replace(/[\s\-–]+$/, '').replace(/\s+/g, ' ').trim();
+  /** Per-restaurant split of a payment row; older history rows fall back to their single company (or none). */
+  C.partsOf = r => (r.parts && r.parts.length ? r.parts : r.company ? [{ company: r.company, amount: r.amount, sources: r.sources || [] }] : []);
+
   /**
    * lines: review lines. o: {date, mode:'N'|'R'|'I'|'A', refStart, debitNarration, creditNarration, combine, dateFormat}
    * db: {beneficiaries, accounts, history}
@@ -880,14 +886,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       if (!l.confirmed) { errors.push(`${l.source}: confirm match to “${b.name}”.`); continue; }
       const a = accs.get(l.accountId);
       if (!a) { errors.push(`${l.source}: no debit account.`); continue; }
-      // Combine = one payment per vendor bank account *per paying company*. The company is the report's
-      // "Restaurant Name" (e.g. Bengaluru Cafe vs Central Kitchen) — they can share a debit account, so the account
-      // alone can't tell them apart. C.norm drops DT1/DT2 tags, so branches of one company still merge.
+      // Combine = one bank payment (one UTR) per vendor bank account + debit account. Each payment keeps a breakdown
+      // by the report's "Restaurant Name" (e.g. Central Kitchen vs Bengaluru Cafe) so every company can clear its own
+      // share in Tally against the same UTR. DT1/DT2 branches of one restaurant fold into one part.
       const vendor = b.account && b.ifsc ? `${b.account}|${b.ifsc}` : `B${b.id}`;
-      const company = C.norm(l.outlet);
-      const key = o.combine ? `${vendor}|${a.id}|${company}` : `L${l.id}`;
-      const g = groups.get(key) || { b, a, company: String(l.outlet || '').replace(/(^|[^a-z0-9])dt\s*[12](?!\d)/gi, ' ').replace(/[\s\-–]+$/, '').replace(/\s+/g, ' ').trim(), amount: 0, sources: [], lineIds: [], outlets: new Set() };
+      const key = o.combine ? `${vendor}|${a.id}` : `L${l.id}`;
+      const g = groups.get(key) || { b, a, amount: 0, sources: [], lineIds: [], outlets: new Set(), parts: new Map() };
       g.amount = round2(g.amount + amt); g.sources.push(l.source); g.lineIds.push(l.id); if (l.tag) g.outlets.add(l.tag);
+      const co = C.companyOf(l.outlet), ck = C.norm(co), p = g.parts.get(ck) || { company: co, amount: 0, sources: [] };
+      p.amount = round2(p.amount + amt); p.sources.push(l.source); g.parts.set(ck, p);
       groups.set(key, g);
     }
     const narrCut = new Set();
@@ -901,8 +908,9 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         debitAccount: a.number, amount: g.amount, name: b.name, account: b.account, ifsc: b.ifsc,
         date: o.date ? C.formatDate(o.date, o.dateFormat) : '', iso: o.date, mode, ref: ref++, nickname: b.nicknames[0] || '',
         benType: '', debitNarration: C.fillNarration(o.debitNarration, o.date, outlets),
-        creditNarration: C.fillNarration(o.creditNarration, o.date, outlets), invoice: '', sources: g.sources, lineIds: g.lineIds, company: g.company, outlets
+        creditNarration: C.fillNarration(o.creditNarration, o.date, outlets), invoice: '', sources: g.sources, lineIds: g.lineIds, parts: [...g.parts.values()].filter(p => p.company), outlets
       };
+      if (row.parts.length === 1) row.company = row.parts[0].company;
       for (const [k, label] of [['debitNarration', 'Debit'], ['creditNarration', 'Credit']]) {
         const full = C.expandNarration(o[k], o.date, outlets);
         if (full.length > C.NARR_MAX && !narrCut.has(k)) { narrCut.add(k); warnings.push(`${label} narration is ${full.length} characters; the bank allows ${C.NARR_MAX}. Shortened to “${row[k]}”.`); }
@@ -1373,7 +1381,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <label class="f">Credit narration<input type="text" data-b="creditNarration" value="${esc(b.creditNarration)}" aria-describedby="cnt-creditNarration"><small class="cnt" id="cnt-creditNarration" aria-live="polite"></small></label>
     </div>
     <div class="row" style="margin-top:14px;gap:20px">
-      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment per restaurant/company (sum of amounts)</label>
+      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment (restaurant split kept for Tally)</label>
       <label class="row"><input type="checkbox" data-b="split" ${b.split ? 'checked' : ''}> One file per debit account</label></div></section>
     <section class="card"><h2>Review</h2>
       <datalist id="benlist">${db.beneficiaries.map(x => `<option value="${esc(benLabel(x))}"></option>`).join('')}</datalist>
@@ -1464,7 +1472,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /** Tag review lines that were merged into one payment with the combined total. */
   function paintMerges(res) {
     const note = new Map();
-    res.rows.forEach(r => { if (r.lineIds.length > 1) r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)}${r.company ? ` for ${r.company}` : ''}`)); });
+    res.rows.forEach(r => {
+      if (r.lineIds.length < 2) return;
+      const split = r.parts.length > 1 ? ` (${r.parts.map(p => `${p.company} ${inr(p.amount)}`).join(' + ')})` : r.company ? ` for ${r.company}` : '';
+      r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)}${split}`));
+    });
     document.querySelectorAll('#tb tr[data-i]').forEach(tr => {
       const el = tr.querySelector('.mg'); if (!el) return;
       const t = note.get(+tr.dataset.i) || '';
@@ -1764,9 +1776,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const utrCell = r => (r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>${copyBtn(r.bank.utr, 'UTR')}` : '—');
   const bankDates = h => h.rows.map(r => r.bank && r.bank.date).filter(Boolean).sort();
   const retryItemsOf = h => h.rows.filter(r => r.bank && (r.bank.status === 'Failed' || r.bank.status === 'Missing') && !r.reissued).map(r => ({ h, r }));
+  /** Sub-rows showing each restaurant's share of a merged payment, carrying the same UTR. */
+  const splitRows = (r, after) => { const ps = C.partsOf(r); return ps.length > 1 ? ps.map(p => `<tr class="split"><td></td><td>↳ ${esc(p.company)}<small>${esc(p.sources.join(', '))}</small></td><td class="num">${inr(p.amount)}</td>${'<td></td>'.repeat(after - 1)}<td>${r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>` : '—'}</td></tr>`).join('') : ''; };
   function fileTable(h) {
     return `<div class="scroll" style="max-height:55vh"><table><thead><tr><th>Ref</th><th>Beneficiary</th><th class="num">Amount</th><th>Status</th><th>Txn date</th><th>UTR</th></tr></thead><tbody>
-      ${h.rows.map(r => `<tr><td>${esc(r.ref)}</td><td>${esc(r.name)}<small>${esc(r.nickname)}</small></td><td class="num">${inr(r.amount)}</td><td>${bankChip(r)}</td><td>${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td>${utrCell(r)}</td></tr>`).join('')}</tbody></table></div>`;
+      ${h.rows.map(r => `<tr><td>${esc(r.ref)}</td><td>${esc(r.name)}<small>${esc(r.nickname)}</small></td><td class="num">${inr(r.amount)}</td><td>${bankChip(r)}</td><td>${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td>${utrCell(r)}</td></tr>${splitRows(r, 3)}`).join('')}</tbody></table></div>`;
   }
   function verifyBar(h) {
     const v = h.verified, input = `<input hidden type="file" class="vfile" data-id="${h.id}" accept=".xlsx,.xls,.csv">`;
@@ -1799,8 +1813,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const KIT = /dakshin\s*thindi/i, KIT_CO = /central\s*kitchen|dakshin\s*thindi/i;
   // Central kitchen = payments made for the "Central Kitchen" restaurant block in the supplier report (r.company,
   // recorded from this version on), plus older payments made to Dakshin Thindi itself.
-  const isKit = r => KIT_CO.test(r.company || '') || KIT.test(r.name);
-  const kitItems = list => list.flatMap(h => h.rows.filter(isKit).map(r => ({ h, r }))).sort((a, b) => b.h.ts.localeCompare(a.h.ts));
+  const kitShare = r => { const ps = C.partsOf(r).filter(p => KIT_CO.test(p.company)); return ps.length ? C.round2(ps.reduce((s, p) => s + p.amount, 0)) : KIT.test(r.name) ? r.amount : 0; };
+  const kitItems = list => list.flatMap(h => h.rows.map(r => ({ h, r, amt: kitShare(r) })).filter(x => x.amt > 0).map(x => ({ h: x.h, r: { ...x.r, amount: x.amt } }))).sort((a, b) => b.h.ts.localeCompare(a.h.ts));
   const shortD = ts => new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   function kitHtml(list, total) {
     const items = kitItems(list), sum = items.reduce((s, x) => s + x.r.amount, 0), files = new Set(items.map(x => x.h.id)).size, open = ui.dash.kitOpen, shown = items.slice(0, 8);
@@ -1850,7 +1864,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const total = list.reduce((s, h) => s + h.total, 0), pays = list.reduce((s, h) => s + h.count, 0), pend = list.filter(h => h.status === 'Generated' || h.status === 'Uploaded'), attn = list.filter(h => h.status === 'Needs attention');
     const delta = prevTotal ? Math.round((total - prevTotal) / prevTotal * 100) : null;
     const byOutlet = new Map(), byPayee = new Map(), byCo = new Map();
-    list.forEach(h => h.rows.forEach(r => { byOutlet.set(acctOf(r), (byOutlet.get(acctOf(r)) || 0) + r.amount); byPayee.set(r.name, (byPayee.get(r.name) || 0) + r.amount); if (r.company) byCo.set(r.company, (byCo.get(r.company) || 0) + r.amount); }));
+    list.forEach(h => h.rows.forEach(r => { byOutlet.set(acctOf(r), (byOutlet.get(acctOf(r)) || 0) + r.amount); byPayee.set(r.name, (byPayee.get(r.name) || 0) + r.amount); C.partsOf(r).forEach(p => byCo.set(p.company, (byCo.get(p.company) || 0) + p.amount)); }));
     const bk = makeBuckets(f, t, list); dashCache = { bk, list };
     if (d.sel != null && !bk[d.sel]) d.sel = null;
     return `${head('Dashboard', 'Payment files generated, at a glance.')}${banners()}
@@ -1948,7 +1962,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <div class="card kpi"><h2>Status</h2><div class="val" style="font-size:20px"><span class="chip ${statusCls(h)}">${esc(statusLabel(h))}</span></div></div></div>
         ${by.size > 1 ? hbars(by, '') : ''}
         <div class="scroll" style="max-height:none;margin-top:8px"><table><thead><tr><th>Ref</th><th>Beneficiary</th><th>Account</th><th>IFSC</th><th class="num">Amount</th><th>Mode</th><th>Status</th><th>Txn date</th><th>UTR</th><th>From report lines</th></tr></thead><tbody>
-        ${h.rows.map(r => `<tr><td>${esc(r.ref)}</td><td>${esc(r.name)}</td><td class="mono">${esc('•'.repeat(Math.max(0, String(r.account).length - 4)) + String(r.account).slice(-4))}</td><td class="mono">${esc(r.ifsc)}</td><td class="num">${inr(r.amount)}</td><td>${esc(r.mode)}</td><td>${bankChip(r)}</td><td>${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td>${utrCell(r)}</td><td>${esc((r.sources || []).join('; '))}</td></tr>`).join('')}</tbody></table></div></div>
+        ${h.rows.map(r => `<tr><td>${esc(r.ref)}</td><td>${esc(r.name)}</td><td class="mono">${esc('•'.repeat(Math.max(0, String(r.account).length - 4)) + String(r.account).slice(-4))}</td><td class="mono">${esc(r.ifsc)}</td><td class="num">${inr(r.amount)}</td><td>${esc(r.mode)}</td><td>${bankChip(r)}</td><td>${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td>${utrCell(r)}</td><td>${esc((r.sources || []).join('; '))}</td></tr>${C.partsOf(r).length > 1 ? C.partsOf(r).map(p => `<tr class="split"><td></td><td>↳ ${esc(p.company)}</td><td></td><td></td><td class="num">${inr(p.amount)}</td><td></td><td></td><td></td><td>${r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>` : '—'}</td><td>${esc(p.sources.join('; '))}</td></tr>`).join('') : ''}`).join('')}</tbody></table></div></div>
       <div class="pk-f">${h.verified ? `<button data-act="copy-tally" data-id="${h.id}">Copy for Tally</button>` : ''}<button data-act="hist-dl" data-id="${h.id}" data-k="csv">Download CSV</button><button data-act="hist-dl" data-id="${h.id}" data-k="xlsx">Download XLSX</button>
         ${h.status !== 'Generated' ? '' : `<button class="primary" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>`}</div>`;
     dlg.showModal();
@@ -2085,7 +2099,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       toast('Copied.');
     } catch (e) { toast('Could not copy — select the text and copy it manually.', true); }
   }
-  const tallyText = h => h.rows.filter(r => r.bank && r.bank.status === 'Successful').map(r => [C.fmtLong(r.bank.date), r.name, r.amount.toFixed(2), r.bank.utr].join('\t')).join('\n');
+  // One line per restaurant share (same UTR) so each company clears its own amount; columns: date, vendor, amount, UTR, restaurant.
+  const tallyText = h => h.rows.filter(r => r.bank && r.bank.status === 'Successful').flatMap(r => {
+    const ps = C.partsOf(r), shares = ps.length ? ps : [{ company: '', amount: r.amount }];
+    return shares.map(p => [C.fmtLong(r.bank.date), r.name, p.amount.toFixed(2), r.bank.utr, p.company].join('\t'));
+  }).join('\n');
   function applyRecon() {
     const rec = ui.rec, res = rec.res, now = new Date().toISOString(), meta = rec.parsed.meta;
     const touched = commitRows(res.files, now);
