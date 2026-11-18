@@ -870,6 +870,33 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   C.partsOf = r => (r.parts && r.parts.length ? r.parts : r.company ? [{ company: r.company, amount: r.amount, sources: r.sources || [] }] : []);
 
   /**
+   * Attach restaurant shares to rows generated before shares were recorded, using the original supplier report.
+   * Each row's r.sources names the report lines it was built from; lines are consumed once so a vendor listed under
+   * two restaurants is split correctly. A row is only split when the report amounts add up to what was paid.
+   * Returns {split, single, skipped:[names]}.
+   */
+  C.splitFromReport = (rows, reportLines) => {
+    const pool = new Map();
+    reportLines.filter(l => l.pending > 0).forEach(l => { const k = C.norm(l.source); (pool.get(k) || pool.set(k, []).get(k)).push(l); });
+    let split = 0, single = 0; const skipped = [];
+    for (const r of rows) {
+      const parts = new Map(); let ok = (r.sources || []).length > 0;
+      for (const src of r.sources || []) {
+        const l = (pool.get(C.norm(src)) || []).shift(); if (!l) { ok = false; break; }
+        const co = C.companyOf(l.outlet), ck = C.norm(co), p = parts.get(ck) || { company: co, amount: 0, sources: [] };
+        p.amount = round2(p.amount + l.pending); p.sources.push(l.source); parts.set(ck, p);
+      }
+      const ps = [...parts.values()].filter(p => p.company);
+      if (!ok || !ps.length) { skipped.push(r.name); continue; }
+      if (ps.length === 1) { ps[0].amount = r.amount; r.parts = ps; r.company = ps[0].company; single++; continue; }
+      // amount was edited in Review → can't know each restaurant's share for sure
+      if (round2(ps.reduce((s, p) => s + p.amount, 0)) !== round2(r.amount)) { skipped.push(r.name); continue; }
+      r.parts = ps; delete r.company; split++;
+    }
+    return { split, single, skipped };
+  };
+
+  /**
    * lines: review lines. o: {date, mode:'N'|'R'|'I'|'A', refStart, debitNarration, creditNarration, combine, dateFormat}
    * db: {beneficiaries, accounts, history}
    */
@@ -1663,15 +1690,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   /* ================= HISTORY ================= */
   function viewHis() {
-    const h0 = head('History', 'Every payment file you have generated. Entries are append-only.');
+    const h0 = head('History', 'Every payment file you have generated. Only unverified test files can be deleted.');
     if (!db.history.length) return `${h0}<section class="card"><p class="muted" style="text-align:center;padding:24px 0">No payment files generated yet.</p></section>`;
     return `${h0}<section class="card"><div class="row" style="justify-content:flex-end"><button data-act="hist-csv">Export audit CSV</button></div>
       <div class="scroll" style="margin-top:12px;max-height:none"><table class="rt hist"><thead><tr><th>Generated</th><th>Type</th><th>Pay date</th><th class="num">Payments</th><th class="num">Total</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>
       ${db.history.map(h => `<tr><td data-l="Generated">${esc(new Date(h.ts).toLocaleString('en-IN'))}</td><td data-l="Type">${esc(h.type)}</td><td data-l="Pay date">${esc(h.iso)}</td><td class="num" data-l="Payments">${h.count}</td><td class="num" data-l="Total">${inr(h.total)}</td><td data-l="Source"><span class="src">${esc(h.report || '')}<small>${esc(h.file)}</small></span></td>
       <td data-l="Status"><span class="chip ${statusCls(h)}">${esc(statusLabel(h))}</span></td>
       <td class="num acts"><button class="sm" data-act="hist-open" data-id="${h.id}">${ui.openHist === h.id ? 'Hide' : 'Details'}</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
-      ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}</td></tr>
-      ${ui.openHist === h.id ? `<tr class="hist-d"><td colspan="8"><table class="rt"><thead><tr><th>Ref</th><th>Beneficiary</th><th>Account</th><th class="num">Amount</th><th>Mode</th><th>Bank result</th><th>From report lines</th></tr></thead><tbody>${h.rows.map(r => `<tr><td data-l="Ref">${r.ref}</td><td data-l="Beneficiary">${esc(r.name)}</td><td class="mono" data-l="Account">${esc('•'.repeat(Math.max(0, r.account.length - 4)) + r.account.slice(-4))}</td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Mode">${r.mode}</td><td data-l="Bank result">${r.bank ? esc(r.bank.status + (r.bank.utr ? ' · ' + r.bank.utr : '')) : '—'}</td><td data-l="Report lines">${esc((r.sources || []).join('; '))}</td></tr>`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
+      ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}${splitBtn(h)}${delBtn(h)}</td></tr>
+      ${ui.openHist === h.id ? `<tr class="hist-d"><td colspan="8"><table class="rt"><thead><tr><th>Ref</th><th>Beneficiary</th><th>Account</th><th class="num">Amount</th><th>Mode</th><th>Bank result</th><th>From report lines</th></tr></thead><tbody>${h.rows.map(r => `<tr><td data-l="Ref">${r.ref}</td><td data-l="Beneficiary">${esc(r.name)}</td><td class="mono" data-l="Account">${esc('•'.repeat(Math.max(0, r.account.length - 4)) + r.account.slice(-4))}</td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Mode">${r.mode}</td><td data-l="Bank result">${r.bank ? esc(r.bank.status + (r.bank.utr ? ' · ' + r.bank.utr : '')) : '—'}</td><td data-l="Report lines">${esc((r.sources || []).join('; '))}</td></tr>${C.partsOf(r).length > 1 ? C.partsOf(r).map(p => `<tr class="split"><td data-l="Share of">${r.ref}</td><td data-l="Restaurant">↳ ${esc(p.company)}</td><td></td><td class="num" data-l="Amount">${inr(p.amount)}</td><td></td><td data-l="UTR">${r.bank && r.bank.utr ? esc(r.bank.utr) : '—'}</td><td data-l="Report lines">${esc(p.sources.join('; '))}</td></tr>`).join('') : ''}`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
       </tbody></table></div></section>`;
   }
 
@@ -1778,6 +1805,23 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const retryItemsOf = h => h.rows.filter(r => r.bank && (r.bank.status === 'Failed' || r.bank.status === 'Missing') && !r.reissued).map(r => ({ h, r }));
   /** Sub-rows showing each restaurant's share of a merged payment, carrying the same UTR. */
   const splitRows = (r, after) => { const ps = C.partsOf(r); return ps.length > 1 ? ps.map(p => `<tr class="split"><td></td><td>↳ ${esc(p.company)}<small>${esc(p.sources.join(', '))}</small></td><td class="num">${inr(p.amount)}</td>${'<td></td>'.repeat(after - 1)}<td>${r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>` : '—'}</td></tr>`).join('') : ''; };
+  const canDelete = h => !h.verified && h.status !== 'Paid';
+  const delBtn = h => (canDelete(h) ? ` <button class="sm danger" data-act="hist-del" data-id="${h.id}">Delete</button>` : '');
+  // Files made before restaurant shares were recorded: let the user attach the original supplier report.
+  const needsSplit = h => !/sal/i.test(h.type) && !h.rows.some(r => r.parts || r.company);
+  const splitBtn = h => (needsSplit(h) ? ` <label class="btn sm">Add restaurant split<input hidden type="file" class="sfile" data-id="${h.id}" accept=".xlsx,.xls,.csv"></label>` : '');
+  async function addSplit(file, id) {
+    const h = db.history.find(x => x.id === id); if (!h) return;
+    try {
+      const sheets = await readSheets(file), p = C.parseSupplierReport(sheets.flatMap(s => s.rows));
+      if (!p.lines.length) throw new Error('No supplier table found. Choose the original weekly supplier report for this file.');
+      const res = C.splitFromReport(h.rows, p.lines);
+      if (!res.split && !res.single) throw new Error('None of this file’s vendors were found in that report. Is it the right week?');
+      save(); render();
+      audit('Restaurant split added', `${h.report || h.type} · ${res.split + res.single} payments from ${file.name}`);
+      toast(`Split added to ${res.split + res.single} of ${h.rows.length} payments${res.skipped.length ? ` · ${res.skipped.length} skipped (amount edited or not in report)` : ''}`, !!res.skipped.length);
+    } catch (e) { console.error(e); toast(e.message, true); }
+  }
   function fileTable(h) {
     return `<div class="scroll" style="max-height:55vh"><table><thead><tr><th>Ref</th><th>Beneficiary</th><th class="num">Amount</th><th>Status</th><th>Txn date</th><th>UTR</th></tr></thead><tbody>
       ${h.rows.map(r => `<tr><td>${esc(r.ref)}</td><td>${esc(r.name)}<small>${esc(r.nickname)}</small></td><td class="num">${inr(r.amount)}</td><td>${bankChip(r)}</td><td>${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td>${utrCell(r)}</td></tr>${splitRows(r, 3)}`).join('')}</tbody></table></div>`;
@@ -1806,7 +1850,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="sm" data-act="rep-expand" data-id="${h.id}">${svg('expand', 16)} Expand</button>
           <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button><button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
           ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}
-          ${!h.verified && h.status !== 'Paid' ? `<button class="sm danger" data-act="hist-del" data-id="${h.id}">Delete</button>` : ''}</div></div></div></div></article>`;
+          ${splitBtn(h)}${delBtn(h)}</div></div></div></div></article>`;
   }
 
   /* ----- central kitchen (Dakshin Thindi) ----- */
@@ -2194,6 +2238,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const t = e.target;
     if (t.id === 'bankfile' && t.files[0]) { loadBank(t.files[0]); t.value = ''; }
     else if (t.classList && t.classList.contains('vfile') && t.files[0]) { loadFileReport(t.files[0], t.dataset.id); t.value = ''; }
+    else if (t.classList && t.classList.contains('sfile') && t.files[0]) { addSplit(t.files[0], t.dataset.id); t.value = ''; }
     else if (t.dataset && t.dataset.rec === 'date') { ui.rec.date = t.value; }
     else if (t.dataset && t.dataset.rec === 'pend') { ui.rec.incPending = t.checked; render(); }
   });
