@@ -122,6 +122,8 @@ td input,td select{min-height:36px}
 td.c-ben{min-width:260px}
 td small{display:block;color:var(--label2);font-size:12px}
 small.cnt{font-size:12px;color:var(--label2);font-variant-numeric:tabular-nums}small.cnt.over{color:var(--warn)}
+@media(max-width:760px){.ft td.e{display:none}.ft td>span{text-align:right;min-width:0}.ft .utr{display:inline-flex;align-items:center;gap:6px;word-break:break-all}
+  .ft tr.split{padding:6px 4px 10px 20px;background:var(--fill);border-bottom:.5px solid var(--sep)}}
 tr.split td{color:var(--label2);font-size:13px;border-top:0;padding-top:2px;padding-bottom:6px}
 td small.mg{margin-top:4px;color:var(--tint-t);font-weight:600}
 tr.off{opacity:.45}
@@ -1127,7 +1129,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 (() => {
   'use strict';
   const C = window.Core, X = window.XLSX, Cloud = window.Cloud;
-  const VERSION = '1.4.0';
+  const VERSION = '1.5.0';
   const MAX_BYTES = 10 * 1024 * 1024, MAX_ROWS = 20000;
 
   /* ---------- state ---------- */
@@ -1206,6 +1208,27 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       e.preventDefault(); el.classList.add('sw-on'); ensureBtn(el).click();
     });
     return { closeAll };
+  })();
+
+  /* ---------- update check: GitHub Pages lets phones cache the page ~10 min; offer a reload when a newer build is live ---------- */
+  (() => {
+    let shown = false;
+    async function check() {
+      if (shown || location.protocol === 'file:') return;
+      try {
+        const res = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+        const m = (await res.text()).match(/const VERSION = '([\d.]+)'/);
+        if (m && m[1] !== VERSION) {
+          shown = true;
+          const t = $('#toast'); t.textContent = `Version ${m[1]} is available `;
+          const b = document.createElement('button'); b.type = 'button'; b.className = 'undo'; b.textContent = 'Reload';
+          b.onclick = () => location.replace(location.pathname + '?v=' + m[1]);
+          t.append(b); t.className = 'show act'; clearTimeout(toastT);
+        }
+      } catch (_) { /* offline: try again on next focus */ }
+    }
+    setTimeout(check, 3000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
   })();
 
   /** Toast with an Undo action (6 s) — used instead of a confirmation dialog for swipe-to-delete. */
@@ -1415,7 +1438,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /* ================= SIDEBAR ================= */
   function buildSidebar() {
     const items = [['dash', 'Dashboard'], ['gen', 'Generate'], ['rec', 'Reconcile'], ['ben', 'Beneficiaries'], ['set', 'Settings'], ['his', 'History'], ['sec', 'Security & Audit']];
-    $('#sb').innerHTML = `<div class="brand"><div class="appicon">${svg('up', 24)}</div><div><b>Dakshin PayFlow</b><span>Version ${VERSION} · Local</span></div></div>
+    $('#sb').innerHTML = `<div class="brand"><div class="appicon">${svg('up', 24)}</div><div><b>Dakshin PayFlow</b><span>Version ${VERSION} · Cloud</span></div></div>
       <nav class="nav" aria-label="Sections">${items.map(([k, t], i) => `${k === 'sec' ? '<hr>' : ''}<button data-tab="${k}" style="--i:${i}">${svg(k)}<span>${t}</span>${k === 'set' && !db.accounts.length ? '<span class="badge" aria-label="Action needed">1</span>' : ''}</button>`).join('')}</nav>
       <div class="sb-foot"><div class="theme" role="group" aria-label="Appearance">${[['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']].map(([v, t]) => `<button data-act="theme" data-v="${v}" aria-pressed="${getTheme() === v}">${t}</button>`).join('')}</div>
         <div class="who"><div><b>${esc(ui.email)}</b><span>${esc(ui.role)}</span></div><button class="sm" data-act="signout">Sign out</button></div>
@@ -1878,7 +1901,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const bankDates = h => h.rows.map(r => r.bank && r.bank.date).filter(Boolean).sort();
   const retryItemsOf = h => h.rows.filter(r => r.bank && (r.bank.status === 'Failed' || r.bank.status === 'Missing') && !r.reissued).map(r => ({ h, r }));
   /** Sub-rows showing each restaurant's share of a merged payment, carrying the same UTR. */
-  const splitRows = (r, after) => { const ps = C.partsOf(r); return ps.length > 1 ? ps.map(p => `<tr class="split"><td></td><td>↳ ${esc(p.company)}<small>${esc(p.sources.join(', '))}</small></td><td class="num">${inr(p.amount)}</td>${'<td></td>'.repeat(after - 1)}<td>${r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>` : '—'}</td></tr>`).join('') : ''; };
+  const splitRows = (r, after) => { const ps = C.partsOf(r); return ps.length > 1 ? ps.map(p => `<tr class="split"><td class="e"></td><td data-l="Restaurant"><span>↳ ${esc(p.company)}<small>${esc(p.sources.join(', '))}</small></span></td><td class="num" data-l="Share">${inr(p.amount)}</td>${'<td class="e"></td>'.repeat(after - 1)}<td data-l="UTR">${r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>` : '—'}</td></tr>`).join('') : ''; };
   const canDelete = h => !h.verified && h.status !== 'Paid';
   const swipeAttr = h => (canDelete(h) ? ` data-swipe-del="${h.id}"` : '');
   // Files made before restaurant shares were recorded: let the user attach the original supplier report.
@@ -1897,8 +1920,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     } catch (e) { console.error(e); toast(e.message, true); }
   }
   function fileTable(h) {
-    return `<div class="scroll" style="max-height:55vh"><table><thead><tr><th>Ref</th><th>Beneficiary</th><th class="num">Amount</th><th>Status</th><th>Txn date</th><th>UTR</th></tr></thead><tbody>
-      ${h.rows.map(r => `<tr><td>${esc(r.ref)}</td><td>${esc(r.name)}<small>${esc(r.nickname)}</small></td><td class="num">${inr(r.amount)}</td><td>${bankChip(r)}</td><td>${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td>${utrCell(r)}</td></tr>${splitRows(r, 3)}`).join('')}</tbody></table></div>`;
+    return `<div class="scroll" style="max-height:55vh"><table class="rt ft"><thead><tr><th>Ref</th><th>Beneficiary</th><th class="num">Amount</th><th>Status</th><th>Txn date</th><th>UTR</th></tr></thead><tbody>
+      ${h.rows.map(r => `<tr><td data-l="Ref">${esc(r.ref)}</td><td data-l="Beneficiary"><span>${esc(r.name)}<small>${esc(r.nickname)}</small></span></td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Status">${bankChip(r)}</td><td data-l="Txn date">${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td data-l="UTR"><span class="utr">${utrCell(r)}</span></td></tr>${splitRows(r, 3)}`).join('')}</tbody></table></div>`;
   }
   function verifyBar(h) {
     const v = h.verified, input = `<input hidden type="file" class="vfile" data-id="${h.id}" accept=".xlsx,.xls,.csv">`;
@@ -1906,7 +1929,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const n = k => h.rows.filter(r => r.bank && r.bank.status === k).length, d = bankDates(h), items = retryItemsOf(h);
     return `<div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px"><span class="chip ok">${n('Successful')} successful</span>${n('Failed') ? `<span class="chip bad">${n('Failed')} failed</span>` : ''}${n('Missing') ? `<span class="chip bad">${n('Missing')} missing</span>` : ''}${n('Pending') ? `<span class="chip warn">${n('Pending')} pending with bank</span>` : ''}</div>
       <p class="muted" style="margin:0 0 10px">Report: ${esc(v.file)}${v.from ? ` · ${esc(fmtD(v.from))} to ${esc(fmtD(v.to || v.from))}` : ''}${d.length ? ` · transactions ${esc(C.fmtLong(d[0]))}${d[0] !== d[d.length - 1] ? ' to ' + esc(C.fmtLong(d[d.length - 1])) : ''}` : ''}</p>
-      <div class="row" style="flex-wrap:wrap;margin-bottom:10px"><button class="sm primary" data-act="copy-tally" data-id="${h.id}">Copy for Tally</button><label class="btn sm">Replace report${input}</label></div>
+      <div class="row" style="flex-wrap:wrap;margin-bottom:10px"><button class="sm primary" data-act="copy-tally" data-id="${h.id}">Copy for Tally</button>${splitBtn(h)}<label class="btn sm">Replace report${input}</label></div>
+      ${needsSplit(h) ? '<p class="muted" style="margin:0 0 10px">This file was made before restaurant shares were saved. Add the split from the original weekly report to see each restaurant’s amount under the same UTR.</p>' : ''}
       ${items.length ? `<div class="retry"><div class="grow"><b>${items.length} failed / missing</b><br><small class="muted">Next reference numbers continue from ${db.refCounter}</small></div>
         <label class="f" style="min-width:170px;margin:0">Payment date<input type="date" data-rec="date" value="${esc(ui.rec.date)}"></label>
         <button class="sm" data-act="file-retry" data-id="${h.id}" data-k="csv">CSV</button><button class="sm primary" data-act="file-retry" data-id="${h.id}" data-k="xlsx">New file (XLSX)</button></div>` : ''}`;
@@ -1924,7 +1948,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="sm" data-act="rep-expand" data-id="${h.id}">${svg('expand', 16)} Expand</button>
           <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button><button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
           ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}
-          ${splitBtn(h)}</div></div></div></div></article>`;
+          ${h.verified ? '' : splitBtn(h)}</div></div></div></div></article>`;
   }
 
   /* ----- central kitchen (Dakshin Thindi) ----- */
