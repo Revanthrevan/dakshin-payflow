@@ -154,6 +154,16 @@ input.pin{text-align:center;font-size:24px;letter-spacing:.5em}
 .err{color:var(--bad);min-height:1.2em}
 #toast{position:fixed;top:14px;left:50%;transform:translate(-50%,-30px);opacity:0;pointer-events:none;z-index:50;padding:10px 18px;border-radius:99px;background:var(--mat);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:.5px solid var(--sep);box-shadow:0 8px 30px rgba(0,0,0,.2);transition:all .5s var(--ease);max-width:90vw}
 #toast.show{opacity:1;transform:translate(-50%,0)}#toast.err{color:var(--bad)}
+#toast.act{pointer-events:auto;display:flex;align-items:center;gap:12px;padding-right:6px}
+#toast .undo{min-height:32px;padding:0 14px;border-radius:99px;background:var(--fill);color:var(--tint-t);font-weight:600;border:0}
+/* swipe-to-delete: children slide left over a red action that only exists while swiping */
+[data-swipe-del]{position:relative;touch-action:pan-y}
+[data-swipe-del]>*:not(.sw-del){transform:translateX(var(--dx,0px))}
+[data-swipe-del].sw-anim>*:not(.sw-del){transition:transform .38s cubic-bezier(.2,.9,.25,1.05)}
+[data-swipe-del].sw-on>*:not(.sw-del){position:relative;z-index:1;background:var(--card)}
+.sw-del{position:absolute;top:0;right:0;bottom:0;width:var(--sw-w,96px);z-index:0;display:flex;align-items:center;justify-content:center;
+  border:0;border-radius:0;background:var(--bad,#ff3b30);color:#fff;font-weight:600;font-size:15px;min-height:44px;padding:0 12px}
+[data-swipe-del]:not(.sw-on)>.sw-del{visibility:hidden}
 @media(pointer:coarse){td input,td select{min-height:44px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
 
@@ -1142,6 +1152,66 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const t = $('#toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
     clearTimeout(toastT); toastT = setTimeout(() => (t.className = ''), err ? 5000 : 2600);
   }
+  /* ---------- swipe-to-delete (pointer events: touch, pen and mouse drag) ---------- */
+  const Swipe = (() => {
+    const OPEN = 96, MIN = 10; let cur = null, s = null, suppress = false;
+    const set = (el, dx, anim) => { el.classList.toggle('sw-anim', !!anim); el.style.setProperty('--dx', dx + 'px'); };
+    const ensureBtn = el => {
+      let b = el.querySelector(':scope > .sw-del');
+      if (!b) { b = document.createElement('button'); b.type = 'button'; b.className = 'sw-del'; b.dataset.act = 'hist-del'; b.dataset.id = el.dataset.swipeDel; b.textContent = 'Delete'; el.append(b); }
+      return b;
+    };
+    const close = el => { if (!el) return; set(el, 0, true); setTimeout(() => { if (el.style.getPropertyValue('--dx') === '0px') el.classList.remove('sw-on'); }, 400); if (cur === el) cur = null; };
+    const closeAll = () => document.querySelectorAll('[data-swipe-del].sw-on').forEach(close);
+    document.addEventListener('pointerdown', e => {
+      const el = e.target.closest('[data-swipe-del]');
+      if (cur && cur !== el) close(cur);
+      if (!el || e.target.closest('.sw-del') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      s = { el, x: e.clientX, y: e.clientY, base: el === cur ? -OPEN : 0, dx: 0, on: false, id: e.pointerId };
+    });
+    document.addEventListener('pointermove', e => {
+      if (!s || e.pointerId !== s.id) return;
+      const dx = e.clientX - s.x, dy = e.clientY - s.y;
+      if (!s.on) {
+        if (Math.abs(dy) > MIN && Math.abs(dy) > Math.abs(dx)) { s = null; return; } // vertical scroll wins
+        if (Math.abs(dx) < MIN) return;
+        s.on = true; s.el.classList.add('sw-on'); ensureBtn(s.el);
+        try { s.el.setPointerCapture(e.pointerId); } catch (_) { /* element re-rendered */ }
+      }
+      const w = s.el.offsetWidth; let x = Math.min(0, s.base + dx);
+      if (x < -w * 0.6) x = -w * 0.6 + (x + w * 0.6) * 0.3; // rubber-band past the commit point
+      s.dx = x; s.el.style.setProperty('--sw-w', Math.max(OPEN, -x) + 'px'); set(s.el, x, false);
+    });
+    const end = e => {
+      if (!s || e.pointerId !== s.id) return;
+      const { el, on, dx } = s; s = null; if (!on) return;
+      suppress = true; setTimeout(() => { suppress = false; }, 0);
+      const w = el.offsetWidth;
+      if (dx < -w * 0.5) { set(el, -w, true); el.style.setProperty('--sw-w', w + 'px'); ensureBtn(el).click(); }      // full swipe: delete
+      else if (dx < -OPEN / 2) { set(el, -OPEN, true); el.style.setProperty('--sw-w', OPEN + 'px'); cur = el; }        // reveal Delete
+      else close(el);
+    };
+    document.addEventListener('pointerup', end); document.addEventListener('pointercancel', e => { if (s && e.pointerId === s.id) { const el = s.el; s = null; close(el); } });
+    // the click that ends a drag must not also open/close the card
+    document.addEventListener('click', e => { if (suppress && !e.target.closest('.sw-del')) { e.stopPropagation(); e.preventDefault(); } }, true);
+    // keyboard: Delete/Backspace on a focused deletable card
+    document.addEventListener('keydown', e => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      const el = e.target.closest && e.target.closest('[data-swipe-del]'); if (!el) return;
+      e.preventDefault(); el.classList.add('sw-on'); ensureBtn(el).click();
+    });
+    return { closeAll };
+  })();
+
+  /** Toast with an Undo action (6 s) — used instead of a confirmation dialog for swipe-to-delete. */
+  function toastUndo(msg, undo) {
+    const t = $('#toast'); t.textContent = msg + ' ';
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'undo'; b.textContent = 'Undo';
+    b.onclick = () => { clearTimeout(toastT); t.className = ''; undo(); };
+    t.append(b); t.className = 'show act';
+    clearTimeout(toastT); toastT = setTimeout(() => (t.className = ''), 6000);
+  }
   function saveBlob(data, name, type) {
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type }));
     a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -1690,14 +1760,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   /* ================= HISTORY ================= */
   function viewHis() {
-    const h0 = head('History', 'Every payment file you have generated. Only unverified test files can be deleted.');
+    const h0 = head('History', 'Every payment file you have generated. Swipe left on an unverified test file to delete it.');
     if (!db.history.length) return `${h0}<section class="card"><p class="muted" style="text-align:center;padding:24px 0">No payment files generated yet.</p></section>`;
     return `${h0}<section class="card"><div class="row" style="justify-content:flex-end"><button data-act="hist-csv">Export audit CSV</button></div>
       <div class="scroll" style="margin-top:12px;max-height:none"><table class="rt hist"><thead><tr><th>Generated</th><th>Type</th><th>Pay date</th><th class="num">Payments</th><th class="num">Total</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>
-      ${db.history.map(h => `<tr><td data-l="Generated">${esc(new Date(h.ts).toLocaleString('en-IN'))}</td><td data-l="Type">${esc(h.type)}</td><td data-l="Pay date">${esc(h.iso)}</td><td class="num" data-l="Payments">${h.count}</td><td class="num" data-l="Total">${inr(h.total)}</td><td data-l="Source"><span class="src">${esc(h.report || '')}<small>${esc(h.file)}</small></span></td>
+      ${db.history.map(h => `<tr${swipeAttr(h)}><td data-l="Generated">${esc(new Date(h.ts).toLocaleString('en-IN'))}</td><td data-l="Type">${esc(h.type)}</td><td data-l="Pay date">${esc(h.iso)}</td><td class="num" data-l="Payments">${h.count}</td><td class="num" data-l="Total">${inr(h.total)}</td><td data-l="Source"><span class="src">${esc(h.report || '')}<small>${esc(h.file)}</small></span></td>
       <td data-l="Status"><span class="chip ${statusCls(h)}">${esc(statusLabel(h))}</span></td>
       <td class="num acts"><button class="sm" data-act="hist-open" data-id="${h.id}">${ui.openHist === h.id ? 'Hide' : 'Details'}</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button> <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
-      ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}${splitBtn(h)}${delBtn(h)}</td></tr>
+      ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}${splitBtn(h)}</td></tr>
       ${ui.openHist === h.id ? `<tr class="hist-d"><td colspan="8"><table class="rt"><thead><tr><th>Ref</th><th>Beneficiary</th><th>Account</th><th class="num">Amount</th><th>Mode</th><th>Bank result</th><th>From report lines</th></tr></thead><tbody>${h.rows.map(r => `<tr><td data-l="Ref">${r.ref}</td><td data-l="Beneficiary">${esc(r.name)}</td><td class="mono" data-l="Account">${esc('•'.repeat(Math.max(0, r.account.length - 4)) + r.account.slice(-4))}</td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Mode">${r.mode}</td><td data-l="Bank result">${r.bank ? esc(r.bank.status + (r.bank.utr ? ' · ' + r.bank.utr : '')) : '—'}</td><td data-l="Report lines">${esc((r.sources || []).join('; '))}</td></tr>${C.partsOf(r).length > 1 ? C.partsOf(r).map(p => `<tr class="split"><td data-l="Share of">${r.ref}</td><td data-l="Restaurant">↳ ${esc(p.company)}</td><td></td><td class="num" data-l="Amount">${inr(p.amount)}</td><td></td><td data-l="UTR">${r.bank && r.bank.utr ? esc(r.bank.utr) : '—'}</td><td data-l="Report lines">${esc(p.sources.join('; '))}</td></tr>`).join('') : ''}`).join('')}</tbody></table></td></tr>` : ''}`).join('')}
       </tbody></table></div></section>`;
   }
@@ -1806,7 +1876,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /** Sub-rows showing each restaurant's share of a merged payment, carrying the same UTR. */
   const splitRows = (r, after) => { const ps = C.partsOf(r); return ps.length > 1 ? ps.map(p => `<tr class="split"><td></td><td>↳ ${esc(p.company)}<small>${esc(p.sources.join(', '))}</small></td><td class="num">${inr(p.amount)}</td>${'<td></td>'.repeat(after - 1)}<td>${r.bank && r.bank.utr ? `<span class="mono">${esc(r.bank.utr)}</span>` : '—'}</td></tr>`).join('') : ''; };
   const canDelete = h => !h.verified && h.status !== 'Paid';
-  const delBtn = h => (canDelete(h) ? ` <button class="sm danger" data-act="hist-del" data-id="${h.id}">Delete</button>` : '');
+  const swipeAttr = h => (canDelete(h) ? ` data-swipe-del="${h.id}"` : '');
   // Files made before restaurant shares were recorded: let the user attach the original supplier report.
   const needsSplit = h => !/sal/i.test(h.type) && !h.rows.some(r => r.parts || r.company);
   const splitBtn = h => (needsSplit(h) ? ` <label class="btn sm">Add restaurant split<input hidden type="file" class="sfile" data-id="${h.id}" accept=".xlsx,.xls,.csv"></label>` : '');
@@ -1839,7 +1909,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   }
   function repHtml(h) {
     const open = ui.dash.openRep === h.id;
-    return `<article class="rep${open ? ' open' : ''}" data-id="${h.id}">
+    return `<article class="rep${open ? ' open' : ''}" data-id="${h.id}"${swipeAttr(h)}>
       <button class="rep-h" data-act="rep-toggle" data-id="${h.id}" aria-expanded="${open}" aria-controls="rb-${h.id}">
         <span class="gl">${svg(/sal/i.test(h.type) ? 'ben' : 'gen', 20)}</span>
         <span class="grow"><b>${esc(h.report || typeLabel(h))}</b><small>${typeLabel(h)} · pay date ${esc(C.fmtLong(h.iso))} · ${h.count} payment${h.count === 1 ? '' : 's'}</small></span>
@@ -1850,7 +1920,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
           <button class="sm" data-act="rep-expand" data-id="${h.id}">${svg('expand', 16)} Expand</button>
           <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button><button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
           ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}
-          ${splitBtn(h)}${delBtn(h)}</div></div></div></div></article>`;
+          ${splitBtn(h)}</div></div></div></div></article>`;
   }
 
   /* ----- central kitchen (Dakshin Thindi) ----- */
@@ -2294,10 +2364,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     else if (a === 'hist-del') {
       // Only unverified files (e.g. test runs) can be removed; verified/paid files are the payment record.
       const hh = db.history.find(h => h.id === id); if (!hh || hh.verified || hh.status === 'Paid') return;
-      if (!confirm(`Delete “${hh.report || typeLabel(hh)}” (${hh.count} payments · ${inr(hh.total)}) from the dashboard and history?\n\nOnly do this for test files that were never uploaded to the bank.`)) return;
-      if (!(await gate('Delete payment file'))) return toast('Delete cancelled.', true);
-      db.history = db.history.filter(h => h !== hh); if (ui.dash.openRep === id) ui.dash.openRep = null;
-      save(); audit('Payment file deleted', `${hh.report || hh.type} · ${hh.count} payments · ${inr(hh.total)} · ${hh.iso}`); toast('File deleted'); render();
+      if (!(await gate('Delete payment file'))) { Swipe.closeAll(); return toast('Delete cancelled.', true); }
+      const at = db.history.indexOf(hh), what = `${hh.report || hh.type} · ${hh.count} payments · ${inr(hh.total)} · ${hh.iso}`;
+      db.history.splice(at, 1); if (ui.dash.openRep === id) ui.dash.openRep = null;
+      save(); audit('Payment file deleted', what); render();
+      toastUndo(`Deleted ${hh.report || 'file'}`, () => { if (db.history.includes(hh)) return; db.history.splice(Math.min(at, db.history.length), 0, hh); save(); audit('Payment file restored', what); render(); toast('File restored'); });
     }
     else if (a === 'hist-up') { const hh = db.history.find(h => h.id === id); if (hh.status === 'Generated') hh.status = 'Uploaded'; save(); audit('Marked uploaded', id); render(); }
     else if (a === 'hist-dl') {
