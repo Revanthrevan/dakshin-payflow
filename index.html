@@ -122,7 +122,7 @@ td input,td select{min-height:36px}
 td.c-ben{min-width:260px}
 td small{display:block;color:var(--label2);font-size:12px}
 small.cnt{font-size:12px;color:var(--label2);font-variant-numeric:tabular-nums}small.cnt.over{color:var(--warn)}
-@media(max-width:760px){.ft td.e{display:none}.ft td>span{text-align:right;min-width:0}.ft .utr{display:inline-flex;align-items:center;gap:6px;word-break:break-all}
+@media(max-width:760px){.ft td.e{display:none}.ft td>span{text-align:right;min-width:0}.ft .utr{display:inline-flex;align-items:center;gap:6px;min-width:0}.ft .utr .mono,.ft tr.split .mono{white-space:nowrap;font-size:13px;letter-spacing:-.01em}
   .ft tr.split{padding:6px 4px 10px 20px;background:var(--fill);border-bottom:.5px solid var(--sep)}}
 tr.split td{color:var(--label2);font-size:13px;border-top:0;padding-top:2px;padding-bottom:6px}
 td small.mg{margin-top:4px;color:var(--tint-t);font-weight:600}
@@ -1129,7 +1129,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 (() => {
   'use strict';
   const C = window.Core, X = window.XLSX, Cloud = window.Cloud;
-  const VERSION = '1.5.1';
+  const VERSION = '1.5.2';
   const MAX_BYTES = 10 * 1024 * 1024, MAX_ROWS = 20000;
 
   /* ---------- state ---------- */
