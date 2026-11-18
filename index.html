@@ -879,12 +879,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       if (!l.confirmed) { errors.push(`${l.source}: confirm match to “${b.name}”.`); continue; }
       const a = accs.get(l.accountId);
       if (!a) { errors.push(`${l.source}: no debit account.`); continue; }
-      // Combine = one payment per vendor bank account *per paying company*. The debit account identifies the company
-      // (e.g. Bengaluru Cafe vs Central Kitchen), so the same vendor paid by two companies stays as two rows and each
-      // company's books tally.
+      // Combine = one payment per vendor bank account *per paying company*. The company is the report's
+      // "Restaurant Name" (e.g. Bengaluru Cafe vs Central Kitchen) — they can share a debit account, so the account
+      // alone can't tell them apart. C.norm drops DT1/DT2 tags, so branches of one company still merge.
       const vendor = b.account && b.ifsc ? `${b.account}|${b.ifsc}` : `B${b.id}`;
-      const key = o.combine ? `${vendor}|${a.id}` : `L${l.id}`;
-      const g = groups.get(key) || { b, a, amount: 0, sources: [], lineIds: [], outlets: new Set() };
+      const company = C.norm(l.outlet);
+      const key = o.combine ? `${vendor}|${a.id}|${company}` : `L${l.id}`;
+      const g = groups.get(key) || { b, a, company: String(l.outlet || '').replace(/(^|[^a-z0-9])dt\s*[12](?!\d)/gi, ' ').replace(/[\s\-–]+$/, '').replace(/\s+/g, ' ').trim(), amount: 0, sources: [], lineIds: [], outlets: new Set() };
       g.amount = round2(g.amount + amt); g.sources.push(l.source); g.lineIds.push(l.id); if (l.tag) g.outlets.add(l.tag);
       groups.set(key, g);
     }
@@ -899,7 +900,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         debitAccount: a.number, amount: g.amount, name: b.name, account: b.account, ifsc: b.ifsc,
         date: o.date ? C.formatDate(o.date, o.dateFormat) : '', iso: o.date, mode, ref: ref++, nickname: b.nicknames[0] || '',
         benType: '', debitNarration: C.fillNarration(o.debitNarration, o.date, outlets),
-        creditNarration: C.fillNarration(o.creditNarration, o.date, outlets), invoice: '', sources: g.sources, lineIds: g.lineIds, outlets
+        creditNarration: C.fillNarration(o.creditNarration, o.date, outlets), invoice: '', sources: g.sources, lineIds: g.lineIds, company: g.company, outlets
       };
       for (const [k, label] of [['debitNarration', 'Debit'], ['creditNarration', 'Credit']]) {
         const full = C.expandNarration(o[k], o.date, outlets);
@@ -1371,7 +1372,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <label class="f">Credit narration<input type="text" data-b="creditNarration" value="${esc(b.creditNarration)}" aria-describedby="cnt-creditNarration"><small class="cnt" id="cnt-creditNarration" aria-live="polite"></small></label>
     </div>
     <div class="row" style="margin-top:14px;gap:20px">
-      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment per paying company (sum of amounts)</label>
+      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment per restaurant/company (sum of amounts)</label>
       <label class="row"><input type="checkbox" data-b="split" ${b.split ? 'checked' : ''}> One file per debit account</label></div></section>
     <section class="card"><h2>Review</h2>
       <datalist id="benlist">${db.beneficiaries.map(x => `<option value="${esc(benLabel(x))}"></option>`).join('')}</datalist>
@@ -1462,7 +1463,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /** Tag review lines that were merged into one payment with the combined total. */
   function paintMerges(res) {
     const note = new Map();
-    res.rows.forEach(r => { if (r.lineIds.length > 1) r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)} from ${accLabel(db.accounts.find(a => a.number === r.debitAccount) || { label: r.debitAccount, number: r.debitAccount })}`)); });
+    res.rows.forEach(r => { if (r.lineIds.length > 1) r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)}${r.company ? ` for ${r.company}` : ''}`)); });
     document.querySelectorAll('#tb tr[data-i]').forEach(tr => {
       const el = tr.querySelector('.mg'); if (!el) return;
       const t = note.get(+tr.dataset.i) || '';
