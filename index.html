@@ -1129,7 +1129,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 (() => {
   'use strict';
   const C = window.Core, X = window.XLSX, Cloud = window.Cloud;
-  const VERSION = '1.5.0';
+  const VERSION = '1.5.1';
   const MAX_BYTES = 10 * 1024 * 1024, MAX_ROWS = 20000;
 
   /* ---------- state ---------- */
@@ -1910,8 +1910,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   async function addSplit(file, id) {
     const h = db.history.find(x => x.id === id); if (!h) return;
     try {
-      const sheets = await readSheets(file), p = C.parseSupplierReport(sheets.flatMap(s => s.rows));
-      if (!p.lines.length) throw new Error('No supplier table found. Choose the original weekly supplier report for this file.');
+      const sheets = await readSheets(file), rows = sheets.flatMap(s => s.rows), p = C.parseSupplierReport(rows);
+      if (!p.lines.length) {
+        // Common mix-up: picking the bank upload file (or the bank's Transaction Analysis Report) instead of the supplier report.
+        if (C.findHeaderRow(rows, C.PAY_REQUIRED)) throw new Error('That is the bank upload file — it has one combined row per vendor, so it can’t show restaurant shares. Choose the Supplier Payment Summary Report (the one with “Restaurant Name:” sections) that you loaded in Generate.');
+        if (!C.parseBankReport(rows).error) throw new Error('That is the bank’s Transaction Analysis Report. For the split, choose the Supplier Payment Summary Report (the one with “Restaurant Name:” sections).');
+        throw new Error('No “Restaurant Name:” sections found. Choose the Supplier Payment Summary Report you loaded in Generate for this week.');
+      }
       const res = C.splitFromReport(h.rows, p.lines);
       if (!res.split && !res.single) throw new Error('None of this file’s vendors were found in that report. Is it the right week?');
       save(); render();
@@ -1930,7 +1935,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     return `<div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px"><span class="chip ok">${n('Successful')} successful</span>${n('Failed') ? `<span class="chip bad">${n('Failed')} failed</span>` : ''}${n('Missing') ? `<span class="chip bad">${n('Missing')} missing</span>` : ''}${n('Pending') ? `<span class="chip warn">${n('Pending')} pending with bank</span>` : ''}</div>
       <p class="muted" style="margin:0 0 10px">Report: ${esc(v.file)}${v.from ? ` · ${esc(fmtD(v.from))} to ${esc(fmtD(v.to || v.from))}` : ''}${d.length ? ` · transactions ${esc(C.fmtLong(d[0]))}${d[0] !== d[d.length - 1] ? ' to ' + esc(C.fmtLong(d[d.length - 1])) : ''}` : ''}</p>
       <div class="row" style="flex-wrap:wrap;margin-bottom:10px"><button class="sm primary" data-act="copy-tally" data-id="${h.id}">Copy for Tally</button>${splitBtn(h)}<label class="btn sm">Replace report${input}</label></div>
-      ${needsSplit(h) ? '<p class="muted" style="margin:0 0 10px">This file was made before restaurant shares were saved. Add the split from the original weekly report to see each restaurant’s amount under the same UTR.</p>' : ''}
+      ${needsSplit(h) ? '<p class="muted" style="margin:0 0 10px">This file was made before restaurant shares were saved. Choose the weekly <b>Supplier Payment Summary Report</b> (with “Restaurant Name:” sections), not the bank upload file, to see each restaurant’s amount under the same UTR.</p>' : ''}
       ${items.length ? `<div class="retry"><div class="grow"><b>${items.length} failed / missing</b><br><small class="muted">Next reference numbers continue from ${db.refCounter}</small></div>
         <label class="f" style="min-width:170px;margin:0">Payment date<input type="date" data-rec="date" value="${esc(ui.rec.date)}"></label>
         <button class="sm" data-act="file-retry" data-id="${h.id}" data-k="csv">CSV</button><button class="sm primary" data-act="file-retry" data-id="${h.id}" data-k="xlsx">New file (XLSX)</button></div>` : ''}`;
