@@ -121,6 +121,8 @@ td.num,th.num{text-align:right}
 td input,td select{min-height:36px}
 td.c-ben{min-width:260px}
 td small{display:block;color:var(--label2);font-size:12px}
+small.cnt{font-size:12px;color:var(--label2);font-variant-numeric:tabular-nums}small.cnt.over{color:var(--warn)}
+td small.mg{margin-top:4px;color:var(--tint-t);font-weight:600}
 tr.off{opacity:.45}
 .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:13px}
 
@@ -850,11 +852,15 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     return `${d}/${m}/${y}`;
   };
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  C.fillNarration = (t, iso, outlets) => {
+  /** Bank rejects Debit/Credit Narration of 25+ chars ("should be less than 25 characters"), so 24 is the hard cap. */
+  C.NARR_MAX = 24;
+  /** Expanded narration before the length cap — used to tell the user what was cut. */
+  C.expandNarration = (t, iso, outlets) => {
     const [y, m, d] = (iso || '').split('-');
     return String(t || '').replace(/\{date\}/g, `${d}/${m}/${y}`).replace(/\{month\}/g, `${MON[+m - 1] || ''} ${y}`).replace(/\{outlet\}/g, (outlets || []).join('-'))
       .replace(/[^A-Za-z0-9 ./-]/g, ' ').replace(/\s+/g, ' ').trim();
   };
+  C.fillNarration = (t, iso, outlets) => C.expandNarration(t, iso, outlets).slice(0, C.NARR_MAX).trim();
 
   /**
    * lines: review lines. o: {date, mode:'N'|'R'|'I'|'A', refStart, debitNarration, creditNarration, combine, dateFormat}
@@ -873,11 +879,20 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       if (!l.confirmed) { errors.push(`${l.source}: confirm match to “${b.name}”.`); continue; }
       const a = accs.get(l.accountId);
       if (!a) { errors.push(`${l.source}: no debit account.`); continue; }
-      const key = o.combine ? `${b.id}|${a.id}` : `L${l.id}`;
-      const g = groups.get(key) || { b, a, amount: 0, sources: [], outlets: new Set() };
-      g.amount = round2(g.amount + amt); g.sources.push(l.source); if (l.tag) g.outlets.add(l.tag);
+      // Combine = one payment per vendor bank account, even when the vendor appears under several outlets / debit accounts.
+      const key = o.combine ? (b.account && b.ifsc ? `${b.account}|${b.ifsc}` : `B${b.id}`) : `L${l.id}`;
+      const g = groups.get(key) || { b, amount: 0, sources: [], lineIds: [], outlets: new Set(), byAcc: new Map() };
+      g.amount = round2(g.amount + amt); g.sources.push(l.source); g.lineIds.push(l.id); if (l.tag) g.outlets.add(l.tag);
+      g.byAcc.set(a.id, round2((g.byAcc.get(a.id) || 0) + amt));
       groups.set(key, g);
     }
+    // A merged payment is debited from the account that carries the largest share.
+    for (const g of groups.values()) {
+      let best = null; for (const [id, v] of g.byAcc) if (!best || v > best[1]) best = [id, v];
+      g.a = accs.get(best[0]);
+      if (g.byAcc.size > 1) warnings.push(`${g.b.name}: ${g.lineIds.length} lines from ${g.byAcc.size} debit accounts merged into one payment of ₹${g.amount.toFixed(2)}, debited from “${g.a.label}”. Untick “Merge the same vendor” to pay them separately.`);
+    }
+    const narrCut = new Set();
     const rows = []; let ref = Number(o.refStart) || 1;
     const ifscRe = /^[A-Z]{4}0[A-Z0-9]{6}$/;
     for (const g of groups.values()) {
@@ -888,8 +903,12 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         debitAccount: a.number, amount: g.amount, name: b.name, account: b.account, ifsc: b.ifsc,
         date: o.date ? C.formatDate(o.date, o.dateFormat) : '', iso: o.date, mode, ref: ref++, nickname: b.nicknames[0] || '',
         benType: '', debitNarration: C.fillNarration(o.debitNarration, o.date, outlets),
-        creditNarration: C.fillNarration(o.creditNarration, o.date, outlets), invoice: '', sources: g.sources, outlets
+        creditNarration: C.fillNarration(o.creditNarration, o.date, outlets), invoice: '', sources: g.sources, lineIds: g.lineIds, outlets
       };
+      for (const [k, label] of [['debitNarration', 'Debit'], ['creditNarration', 'Credit']]) {
+        const full = C.expandNarration(o[k], o.date, outlets);
+        if (full.length > C.NARR_MAX && !narrCut.has(k)) { narrCut.add(k); warnings.push(`${label} narration is ${full.length} characters; the bank allows ${C.NARR_MAX}. Shortened to “${row[k]}”.`); }
+      }
       const bad = m => errors.push(`${b.name}: ${m}`);
       if (!b.account || !b.ifsc) bad('bank details missing — add the account number and IFSC in Beneficiaries (or import your bank details file).');
       else {
@@ -1122,7 +1141,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     keys.forEach(k => { if (tag) put(k, '@' + tag); else put(k, ''); });
     return changed;
   };
-  const NARR = { supplier: 'Supplier payment {date}', salary: 'Salary {month}' };
+  const NARR = { supplier: 'Supplier pay {date}', salary: 'Salary {month}' }; // both expand to ≤ 24 chars (bank limit: < 25)
 
   /* ---------- icons (24px grid, stroke) ---------- */
   const IC = {
@@ -1352,11 +1371,11 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         ${[['N', 'NEFT'], ['A', 'Auto (NEFT, RTGS ≥ ₹2L)'], ['R', 'RTGS'], ['I', 'IMPS']].map(([v, t]) => `<option value="${v}" ${b.mode === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
       <label class="f">First reference no.<input type="number" min="1" data-b="refStart" value="${b.refStart}"></label>
       <label class="f">Default debit account<select data-act="defacc" ${db.accounts.length ? '' : 'disabled'}>${opts || '<option>None added</option>'}</select></label>
-      <label class="f">Debit narration<input type="text" data-b="debitNarration" value="${esc(b.debitNarration)}"></label>
-      <label class="f">Credit narration<input type="text" data-b="creditNarration" value="${esc(b.creditNarration)}"></label>
+      <label class="f">Debit narration<input type="text" data-b="debitNarration" value="${esc(b.debitNarration)}" aria-describedby="cnt-debitNarration"><small class="cnt" id="cnt-debitNarration" aria-live="polite"></small></label>
+      <label class="f">Credit narration<input type="text" data-b="creditNarration" value="${esc(b.creditNarration)}" aria-describedby="cnt-creditNarration"><small class="cnt" id="cnt-creditNarration" aria-live="polite"></small></label>
     </div>
     <div class="row" style="margin-top:14px;gap:20px">
-      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Combine lines for the same beneficiary</label>
+      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment (sum of amounts)</label>
       <label class="row"><input type="checkbox" data-b="split" ${b.split ? 'checked' : ''}> One file per debit account</label></div></section>
     <section class="card"><h2>Review</h2>
       <datalist id="benlist">${db.beneficiaries.map(x => `<option value="${esc(benLabel(x))}"></option>`).join('')}</datalist>
@@ -1429,15 +1448,36 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <td class="num" data-l="Pending">${inr(l.pending)}</td>
         <td class="num" data-l="Pay" style="width:130px"><input type="number" step="0.01" min="0" data-f="amount" value="${l.amount}" aria-label="Amount for ${esc(l.source)}"></td>
         <td data-l="Debit account"><select data-f="acct">${opts(l.accountId)}</select></td>
-        <td data-l="Match">${chip(l)}</td></tr>`;
+        <td data-l="Match">${chip(l)}<small class="mg" hidden></small></td></tr>`;
     }).join('') : '<tr><td colspan="8" class="muted" style="padding:28px;text-align:center">Load a report to review payment lines.</td></tr>';
   }
 
   const batchOpts = () => ({ ...ui.gen.batch, dateFormat: db.settings.dateFormat });
+  /** Live "18 / 25" counter showing the narration as it will be sent (tokens expanded, capped at the bank limit). */
+  function paintNarrationCounts() {
+    const b = ui.gen.batch;
+    for (const k of ['debitNarration', 'creditNarration']) {
+      const el = document.getElementById('cnt-' + k); if (!el) continue;
+      const full = C.expandNarration(b[k], b.date, []), over = full.length > C.NARR_MAX;
+      el.textContent = full ? (over ? `${full.length} / ${C.NARR_MAX} · sent as “${C.fillNarration(b[k], b.date, [])}”` : `${full.length} / ${C.NARR_MAX}`) : `Max ${C.NARR_MAX} characters`;
+      el.classList.toggle('over', over);
+    }
+  }
+  /** Tag review lines that were merged into one payment with the combined total. */
+  function paintMerges(res) {
+    const note = new Map();
+    res.rows.forEach(r => { if (r.lineIds.length > 1) r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)}`)); });
+    document.querySelectorAll('#tb tr[data-i]').forEach(tr => {
+      const el = tr.querySelector('.mg'); if (!el) return;
+      const t = note.get(+tr.dataset.i) || '';
+      el.textContent = t; el.hidden = !t;
+    });
+  }
   const zc = (n, kind) => `<span class="chip ${n ? kind : 'zero'}">${n}</span>`;
   function refresh() {
     const dock = $('#dock'); if (!dock || ui.tab !== 'gen') return;
     const res = ui.gen.res = C.buildPayments(ui.gen.lines, batchOpts(), db);
+    paintNarrationCounts(); paintMerges(res);
     const setupOk = db.accounts.length && db.beneficiaries.length;
     const ok = setupOk && res.rows.length && !res.errors.length;
     dock.innerHTML = `<div class="dock-in">
