@@ -232,6 +232,10 @@ label.row{flex-wrap:nowrap}
 .rep-in{padding:2px 14px 14px}
 @media(max-width:700px){.rep-h{flex-wrap:wrap;row-gap:6px}.rep-h .grow{flex:1 1 calc(100% - 56px)}.rep-h .amt{margin-left:52px}.rep-h .chev{margin-left:auto}}
 .rep-h b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kit-empty{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-bottom:16px}
+.kit-empty .gl{flex:none}.kit-empty .grow{flex:1;min-width:0}.kit-empty b{display:block;font-weight:600}
+.kit-empty small{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--label2);font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+.kit-empty .btn{flex:none;min-height:36px}
 /* ---------- date picker & expand view dialogs ---------- */
 dialog.picker,dialog.full{padding:0;overflow:hidden}
 dialog.picker{width:min(420px,94vw)}
@@ -1931,7 +1935,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const kitItems = list => list.flatMap(h => h.rows.map(r => ({ h, r, amt: kitShare(r) })).filter(x => x.amt > 0).map(x => ({ h: x.h, r: { ...x.r, amount: x.amt } }))).sort((a, b) => b.h.ts.localeCompare(a.h.ts));
   const shortD = ts => new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   function kitHtml(list, total) {
-    const items = kitItems(list), sum = items.reduce((s, x) => s + x.r.amount, 0), files = new Set(items.map(x => x.h.id)).size, open = ui.dash.kitOpen, shown = items.slice(0, 8);
+    const items = kitItems(list);
+    if (!items.length) {
+      // Nothing to show: either prompt to attach the restaurant split to older files, or stay out of the way.
+      const todo = list.filter(needsSplit); if (!todo.length) return '';
+      const h = todo[0], more = todo.length - 1;
+      return `<div class="card kit-empty"><span class="gl">${svg('kitchen', 20)}</span>
+        <span class="grow"><b>Central Kitchen</b><small>Split not added for ${esc(h.report || typeLabel(h))}${more ? ` +${more}` : ''}</small></span>
+        <label class="btn sm">Add split<input hidden type="file" class="sfile" data-id="${h.id}" accept=".xlsx,.xls,.csv"></label></div>`;
+    }
+    const sum = items.reduce((s, x) => s + x.r.amount, 0), files = new Set(items.map(x => x.h.id)).size, open = ui.dash.kitOpen, shown = items.slice(0, 8);
     return `<div style="margin-bottom:16px"><article class="rep${open ? ' open' : ''}" id="kit">
       <button class="rep-h" data-act="kit-toggle" aria-expanded="${open}" aria-controls="kit-b">
         <span class="gl">${svg('kitchen', 20)}</span>
