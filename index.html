@@ -124,6 +124,8 @@ td small{display:block;color:var(--label2);font-size:12px}
 small.cnt{font-size:12px;color:var(--label2);font-variant-numeric:tabular-nums}small.cnt.over{color:var(--warn)}
 @media(max-width:760px){.ft td.e{display:none}.ft td>span{text-align:right;min-width:0}.ft .utr{display:inline-flex;align-items:center;gap:6px;min-width:0}.ft .utr .mono,.ft tr.split .mono{white-space:nowrap;font-size:13px;letter-spacing:-.01em}
   .ft tr.split{padding:6px 4px 10px 20px;background:var(--fill);border-bottom:.5px solid var(--sep)}}
+.spl-g{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.ft tr.sed td{display:block;text-align:left}.ft tr.sed td::before{display:none}
 tr.split td{color:var(--label2);font-size:13px;border-top:0;padding-top:2px;padding-bottom:6px}
 td small.mg{margin-top:4px;color:var(--tint-t);font-weight:600}
 tr.off{opacity:.45}
@@ -887,29 +889,53 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 
   /**
    * Attach restaurant shares to rows generated before shares were recorded, using the original supplier report.
-   * Each row's r.sources names the report lines it was built from; lines are consumed once so a vendor listed under
-   * two restaurants is split correctly. A row is only split when the report amounts add up to what was paid.
-   * Returns {split, single, skipped:[names]}.
+   * Each row's r.sources names the report lines it was built from. Lines are matched by name AND amount, so a vendor
+   * paid twice (e.g. once per debit account) gets the right restaurant on each payment. Re-running replaces any
+   * earlier split. Rows that can't be split exactly get r.splitNote explaining why (shown in the file view).
+   * Returns {split, single, skipped:[{name, note}]}.
    */
   C.splitFromReport = (rows, reportLines) => {
-    const pool = new Map();
-    reportLines.filter(l => l.pending > 0).forEach(l => { const k = C.norm(l.source); (pool.get(k) || pool.set(k, []).get(k)).push(l); });
-    let split = 0, single = 0; const skipped = [];
-    for (const r of rows) {
-      const parts = new Map(); let ok = (r.sources || []).length > 0;
-      for (const src of r.sources || []) {
-        const l = (pool.get(C.norm(src)) || []).shift(); if (!l) { ok = false; break; }
-        const co = C.companyOf(l.outlet), ck = C.norm(co), p = parts.get(ck) || { company: co, amount: 0, sources: [] };
-        p.amount = round2(p.amount + l.pending); p.sources.push(l.source); parts.set(ck, p);
-      }
+    const cents = n => Math.round(Number(n) * 100);
+    const lines = reportLines.filter(l => l.pending > 0).map(l => ({ ...l, k: C.norm(l.source), used: false }));
+    rows.forEach(r => { delete r.parts; delete r.company; delete r.splitNote; delete r.splitLines; });
+    const cands = r => (r.sources || []).map(src => lines.filter(l => !l.used && l.k === C.norm(src)));
+    // distinct lines, one per source slot, whose pending amounts add up exactly to what was paid
+    const exact = r => {
+      const c = cands(r), target = cents(r.amount); let best = null, tries = 0;
+      if (!c.length || c.some(x => !x.length)) return null;
+      const dfs = (i, acc, sum) => {
+        if (best || ++tries > 20000) return;
+        if (i === c.length) { if (sum === target) best = acc.slice(); return; }
+        for (const l of c[i]) { if (acc.includes(l)) continue; acc.push(l); dfs(i + 1, acc, sum + cents(l.pending)); acc.pop(); if (best) return; }
+      };
+      dfs(0, [], 0); return best;
+    };
+    const apply = (r, ls, amountOverride) => {
+      ls.forEach(l => { l.used = true; });
+      const parts = new Map();
+      ls.forEach(l => { const co = C.companyOf(l.outlet), ck = C.norm(co), p = parts.get(ck) || { company: co, amount: 0, sources: [] }; p.amount = round2(p.amount + l.pending); p.sources.push(l.source); parts.set(ck, p); });
       const ps = [...parts.values()].filter(p => p.company);
-      if (!ok || !ps.length) { skipped.push(r.name); continue; }
-      if (ps.length === 1) { ps[0].amount = r.amount; r.parts = ps; r.company = ps[0].company; single++; continue; }
-      // amount was edited in Review → can't know each restaurant's share for sure
-      if (round2(ps.reduce((s, p) => s + p.amount, 0)) !== round2(r.amount)) { skipped.push(r.name); continue; }
-      r.parts = ps; delete r.company; split++;
-    }
-    return { split, single, skipped };
+      if (ps.length === 1) { ps[0].amount = r.amount; r.company = ps[0].company; }
+      if (amountOverride) ps.forEach(p => { p.amount = amountOverride(p); });
+      r.parts = ps; return ps.length;
+    };
+    const out = { split: 0, single: 0, skipped: [] }, count = n => { if (n > 1) out.split++; else if (n === 1) out.single++; };
+    // pass 1: exact name + amount matches (claims the right line for vendors paid more than once)
+    const rest = [];
+    rows.forEach(r => { const ls = exact(r); if (ls) count(apply(r, ls)); else rest.push(r); });
+    // pass 2: amount was changed in Review. One restaurant → it gets the whole payment. Several → can't know the split.
+    rest.forEach(r => {
+      const c = cands(r);
+      if (!c.length || c.some(x => !x.length)) { r.splitNote = 'Not found in this report'; out.skipped.push({ name: r.name, note: r.splitNote }); return; }
+      const pick = c.map((x, i) => x.find(l => !c.slice(0, i).some(y => y[0] === l)) || x[0]);
+      const cos = new Set(pick.map(l => C.norm(C.companyOf(l.outlet))));
+      if (cos.size === 1) { count(apply(r, pick)); return; }
+      const sum = round2(pick.reduce((s, l) => s + l.pending, 0));
+      r.splitNote = `Report pending ₹${sum.toFixed(2)} across ${cos.size} restaurants, but ₹${Number(r.amount).toFixed(2)} was paid`;
+      r.splitLines = pick.map(l => ({ company: C.companyOf(l.outlet), amount: l.pending }));
+      out.skipped.push({ name: r.name, note: r.splitNote });
+    });
+    return out;
   };
 
   /**
@@ -1129,7 +1155,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
 (() => {
   'use strict';
   const C = window.Core, X = window.XLSX, Cloud = window.Cloud;
-  const VERSION = '1.5.2';
+  const VERSION = '1.6.0';
   const MAX_BYTES = 10 * 1024 * 1024, MAX_ROWS = 20000;
 
   /* ---------- state ---------- */
@@ -1905,8 +1931,21 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   const canDelete = h => !h.verified && h.status !== 'Paid';
   const swipeAttr = h => (canDelete(h) ? ` data-swipe-del="${h.id}"` : '');
   // Files made before restaurant shares were recorded: let the user attach the original supplier report.
-  const needsSplit = h => !/sal/i.test(h.type) && !h.rows.some(r => r.parts || r.company);
-  const splitBtn = h => (needsSplit(h) ? ` <label class="btn sm">Add restaurant split<input hidden type="file" class="sfile" data-id="${h.id}" accept=".xlsx,.xls,.csv"></label>` : '');
+  const wasSplit = h => h.rows.some(r => r.parts || r.company || r.splitNote);
+  const needsSplit = h => !/sal/i.test(h.type) && !wasSplit(h);
+  const splitTodo = h => h.rows.filter(r => r.splitNote && !(r.parts && r.parts.length));
+  const splitBtn = h => (/sal/i.test(h.type) ? '' : ` <label class="btn sm">${needsSplit(h) ? 'Add restaurant split' : 'Redo split'}<input hidden type="file" class="sfile" data-id="${h.id}" accept=".xlsx,.xls,.csv"></label>`);
+  /** Inline editor for a payment the report couldn't split exactly: one amount per restaurant, last one is the remainder. */
+  function splitEditor(h, r, cols) {
+    const by = new Map(); (r.splitLines || []).forEach(l => by.set(l.company, (by.get(l.company) || 0) + l.amount));
+    if (by.size < 2) return `<tr class="split"><td colspan="${cols}"><span class="chip warn">Not split</span> <small style="display:inline">${esc(r.splitNote || '')}</small></td></tr>`;
+    const tot = [...by.values()].reduce((a, b) => a + b, 0), cos = [...by.keys()];
+    let left = r.amount; const pre = cos.map((c, i) => { const v = i === cos.length - 1 ? C.round2(left) : C.round2(r.amount * by.get(c) / tot); left -= v; return v; });
+    return `<tr class="split sed"><td colspan="${cols}"><form class="spl" data-h="${h.id}" data-ref="${esc(r.ref)}">
+      <p class="muted" style="margin:0 0 8px">${esc(r.splitNote)}. Enter each restaurant’s share of ${inr(r.amount)}:</p>
+      <div class="spl-g">${cos.map((c, i) => `<label class="f">${esc(c)}<input type="number" step="0.01" min="0" name="p${i}" data-co="${esc(c)}" value="${pre[i]}"></label>`).join('')}</div>
+      <div class="row" style="justify-content:space-between;margin-top:8px"><small class="spl-sum" aria-live="polite"></small><button class="sm primary" type="submit">Save split</button></div></form></td></tr>`;
+  }
   async function addSplit(file, id) {
     const h = db.history.find(x => x.id === id); if (!h) return;
     try {
@@ -1921,12 +1960,13 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       if (!res.split && !res.single) throw new Error('None of this file’s vendors were found in that report. Is it the right week?');
       save(); render();
       audit('Restaurant split added', `${h.report || h.type} · ${res.split + res.single} payments from ${file.name}`);
-      toast(`Split added to ${res.split + res.single} of ${h.rows.length} payments${res.skipped.length ? ` · ${res.skipped.length} skipped (amount edited or not in report)` : ''}`, !!res.skipped.length);
+      ui.dash.openRep = h.id; render();
+      toast(`${res.split} split across restaurants · ${res.single} single restaurant${res.skipped.length ? ` · ${res.skipped.length} need a manual split` : ''}`, !!res.skipped.length);
     } catch (e) { console.error(e); toast(e.message, true); }
   }
   function fileTable(h) {
     return `<div class="scroll" style="max-height:55vh"><table class="rt ft"><thead><tr><th>Ref</th><th>Beneficiary</th><th class="num">Amount</th><th>Status</th><th>Txn date</th><th>UTR</th></tr></thead><tbody>
-      ${h.rows.map(r => `<tr><td data-l="Ref">${esc(r.ref)}</td><td data-l="Beneficiary"><span>${esc(r.name)}<small>${esc(r.nickname)}</small></span></td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Status">${bankChip(r)}</td><td data-l="Txn date">${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td data-l="UTR"><span class="utr">${utrCell(r)}</span></td></tr>${splitRows(r, 3)}`).join('')}</tbody></table></div>`;
+      ${h.rows.map(r => `<tr><td data-l="Ref">${esc(r.ref)}</td><td data-l="Beneficiary"><span>${esc(r.name)}<small>${esc(r.nickname)}</small></span></td><td class="num" data-l="Amount">${inr(r.amount)}</td><td data-l="Status">${bankChip(r)}</td><td data-l="Txn date">${r.bank && r.bank.date ? esc(C.fmtLong(r.bank.date)) : '—'}</td><td data-l="UTR"><span class="utr">${utrCell(r)}</span></td></tr>${splitRows(r, 3)}${r.splitNote && !(r.parts && r.parts.length) ? splitEditor(h, r, 6) : ''}`).join('')}</tbody></table></div>`;
   }
   function verifyBar(h) {
     const v = h.verified, input = `<input hidden type="file" class="vfile" data-id="${h.id}" accept=".xlsx,.xls,.csv">`;
@@ -1935,6 +1975,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     return `<div class="row" style="flex-wrap:wrap;gap:8px;margin-bottom:6px"><span class="chip ok">${n('Successful')} successful</span>${n('Failed') ? `<span class="chip bad">${n('Failed')} failed</span>` : ''}${n('Missing') ? `<span class="chip bad">${n('Missing')} missing</span>` : ''}${n('Pending') ? `<span class="chip warn">${n('Pending')} pending with bank</span>` : ''}</div>
       <p class="muted" style="margin:0 0 10px">Report: ${esc(v.file)}${v.from ? ` · ${esc(fmtD(v.from))} to ${esc(fmtD(v.to || v.from))}` : ''}${d.length ? ` · transactions ${esc(C.fmtLong(d[0]))}${d[0] !== d[d.length - 1] ? ' to ' + esc(C.fmtLong(d[d.length - 1])) : ''}` : ''}</p>
       <div class="row" style="flex-wrap:wrap;margin-bottom:10px"><button class="sm primary" data-act="copy-tally" data-id="${h.id}">Copy for Tally</button>${splitBtn(h)}<label class="btn sm">Replace report${input}</label></div>
+      ${splitTodo(h).length ? `<p style="margin:0 0 10px"><span class="chip warn">${splitTodo(h).length} payment${splitTodo(h).length === 1 ? ' needs' : 's need'} a manual split</span> <small class="muted">${esc(splitTodo(h).map(r => r.name).join(', '))} — enter the shares below.</small></p>` : ''}
       ${needsSplit(h) ? '<p class="muted" style="margin:0 0 10px">This file was made before restaurant shares were saved. Choose the weekly <b>Supplier Payment Summary Report</b> (with “Restaurant Name:” sections), not the bank upload file, to see each restaurant’s amount under the same UTR.</p>' : ''}
       ${items.length ? `<div class="retry"><div class="grow"><b>${items.length} failed / missing</b><br><small class="muted">Next reference numbers continue from ${db.refCounter}</small></div>
         <label class="f" style="min-width:170px;margin:0">Payment date<input type="date" data-rec="date" value="${esc(ui.rec.date)}"></label>
@@ -1980,8 +2021,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <span class="grow"><b>Central Kitchen · Dakshin Thindi</b><small>${items.length} payment${items.length === 1 ? '' : 's'} across ${files} file${files === 1 ? '' : 's'}${total ? ` · ${(sum / total * 100).toFixed(1)}% of total paid` : ''}</small></span>
         <span class="amt">${inr(sum)}</span><span class="chev">${svg('cd', 20)}</span></button>
       <div class="rep-b" id="kit-b" role="region" aria-label="Central kitchen payments"><div><div class="rep-in">
-        ${items.length ? `<div class="scroll" style="max-height:none"><table><thead><tr><th>Date</th><th>Report</th><th>Ref</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
-        ${shown.map(x => `<tr><td>${esc(shortD(x.h.ts))}</td><td>${esc(x.h.report || typeLabel(x.h))}</td><td>${esc(x.r.ref)}</td><td class="num">${inr(x.r.amount)}</td><td><span class="chip ${statusCls(x.h)}">${esc(statusLabel(x.h))}</span></td></tr>`).join('')}
+        ${items.length ? `<div class="scroll" style="max-height:none"><table class="rt ft"><thead><tr><th>Date</th><th>Vendor</th><th>Ref</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
+        ${shown.map(x => `<tr><td data-l="Date">${esc(shortD(x.h.ts))}</td><td data-l="Vendor"><span>${esc(x.r.name)}<small>${esc(x.h.report || typeLabel(x.h))}</small></span></td><td data-l="Ref">${esc(x.r.ref)}</td><td class="num" data-l="Amount">${inr(x.r.amount)}</td><td data-l="Status"><span class="chip ${statusCls(x.h)}">${esc(statusLabel(x.h))}</span></td></tr>`).join('')}
         ${items.length > shown.length ? `<tr><td colspan="5" class="muted">+ ${items.length - shown.length} more — use Expand to see all</td></tr>` : ''}</tbody></table></div>
         <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="sm" data-act="kit-csv">CSV</button><button class="sm" data-act="kit-expand">${svg('expand', 16)} Expand</button></div>`
         : '<p class="muted" style="text-align:center;padding:14px 0">No Central Kitchen payments in this date range. Files generated before this update don’t record the restaurant name, so they aren’t counted here.</p>'}</div></div></div></article></div>`;
@@ -2474,6 +2515,23 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     else if (t.id === 'bq') { ui.q = t.value; $('#bt').innerHTML = benRows(); }
     else if (t.dataset.f === 'amount') { const l = ui.gen.lines[+t.closest('tr').dataset.i]; l.amount = C.round2(parseFloat(t.value) || 0); refresh(); }
   });
+  document.addEventListener('input', e => {
+    const f = e.target.closest && e.target.closest('form.spl'); if (!f) return;
+    const h = db.history.find(x => x.id === f.dataset.h), r = h && h.rows.find(x => String(x.ref) === f.dataset.ref); if (!r) return;
+    const sum = C.round2([...f.querySelectorAll('input')].reduce((a, i) => a + (parseFloat(i.value) || 0), 0)), diff = C.round2(r.amount - sum);
+    const el = f.querySelector('.spl-sum'); el.textContent = diff ? `${diff > 0 ? '₹' + diff.toFixed(2) + ' left' : '₹' + (-diff).toFixed(2) + ' too much'}` : 'Matches the payment ✓';
+    el.style.color = diff ? 'var(--bad)' : 'var(--ok)';
+  });
+  document.addEventListener('submit', e => {
+    if (!e.target.classList.contains('spl')) return;
+    e.preventDefault();
+    const f = e.target, h = db.history.find(x => x.id === f.dataset.h), r = h && h.rows.find(x => String(x.ref) === f.dataset.ref); if (!r) return;
+    const parts = [...f.querySelectorAll('input')].map(i => ({ company: i.dataset.co, amount: C.round2(parseFloat(i.value) || 0), sources: [] })).filter(p => p.amount > 0);
+    const sum = C.round2(parts.reduce((a, p) => a + p.amount, 0));
+    if (sum !== C.round2(r.amount)) return toast(`Shares add up to ${inr(sum)}; the payment was ${inr(r.amount)}.`, true);
+    r.parts = parts; if (parts.length === 1) r.company = parts[0].company; delete r.splitNote; delete r.splitLines;
+    save(); audit('Restaurant split entered', `${r.name} · ${parts.map(p => `${p.company} ${inr(p.amount)}`).join(' + ')}`); toast('Split saved'); render();
+  }, true);
   document.addEventListener('submit', e => {
     if (e.target.id !== 'accform') return;
     e.preventDefault();
