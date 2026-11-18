@@ -219,7 +219,8 @@ label.row{flex-wrap:nowrap}
 .rep-b{display:grid;grid-template-rows:0fr;transition:grid-template-rows .5s var(--ease)}.rep.open .rep-b{grid-template-rows:1fr}
 .rep-b>div{overflow:hidden;min-height:0;visibility:hidden;transition:visibility 0s linear .5s}.rep.open .rep-b>div{visibility:visible;transition-delay:0s}
 .rep-in{padding:2px 14px 14px}
-@media(max-width:700px){.rep-h{flex-wrap:wrap}.rep-h .amt{margin-left:52px}.rep-h .chev{margin-left:auto}}
+@media(max-width:700px){.rep-h{flex-wrap:wrap;row-gap:6px}.rep-h .grow{flex:1 1 calc(100% - 56px)}.rep-h .amt{margin-left:52px}.rep-h .chev{margin-left:auto}}
+.rep-h b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* ---------- date picker & expand view dialogs ---------- */
 dialog.picker,dialog.full{padding:0;overflow:hidden}
 dialog.picker{width:min(420px,94vw)}
@@ -1790,12 +1791,16 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         <div class="row" style="margin-top:12px;justify-content:flex-end;flex-wrap:wrap">
           <button class="sm" data-act="rep-expand" data-id="${h.id}">${svg('expand', 16)} Expand</button>
           <button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="xlsx">XLSX</button><button class="sm" data-act="hist-dl" data-id="${h.id}" data-k="csv">CSV</button>
-          ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}</div></div></div></div></article>`;
+          ${h.status === 'Generated' ? `<button class="sm" data-act="hist-up" data-id="${h.id}">Mark uploaded</button>` : ''}
+          ${!h.verified && h.status !== 'Paid' ? `<button class="sm danger" data-act="hist-del" data-id="${h.id}">Delete</button>` : ''}</div></div></div></div></article>`;
   }
 
   /* ----- central kitchen (Dakshin Thindi) ----- */
-  const KIT = /dakshin\s*thindi/i;
-  const kitItems = list => list.flatMap(h => h.rows.filter(r => KIT.test(r.name)).map(r => ({ h, r }))).sort((a, b) => b.h.ts.localeCompare(a.h.ts));
+  const KIT = /dakshin\s*thindi/i, KIT_CO = /central\s*kitchen|dakshin\s*thindi/i;
+  // Central kitchen = payments made for the "Central Kitchen" restaurant block in the supplier report (r.company,
+  // recorded from this version on), plus older payments made to Dakshin Thindi itself.
+  const isKit = r => KIT_CO.test(r.company || '') || KIT.test(r.name);
+  const kitItems = list => list.flatMap(h => h.rows.filter(isKit).map(r => ({ h, r }))).sort((a, b) => b.h.ts.localeCompare(a.h.ts));
   const shortD = ts => new Date(ts).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   function kitHtml(list, total) {
     const items = kitItems(list), sum = items.reduce((s, x) => s + x.r.amount, 0), files = new Set(items.map(x => x.h.id)).size, open = ui.dash.kitOpen, shown = items.slice(0, 8);
@@ -1809,7 +1814,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         ${shown.map(x => `<tr><td>${esc(shortD(x.h.ts))}</td><td>${esc(x.h.report || typeLabel(x.h))}</td><td>${esc(x.r.ref)}</td><td class="num">${inr(x.r.amount)}</td><td><span class="chip ${statusCls(x.h)}">${esc(statusLabel(x.h))}</span></td></tr>`).join('')}
         ${items.length > shown.length ? `<tr><td colspan="5" class="muted">+ ${items.length - shown.length} more — use Expand to see all</td></tr>` : ''}</tbody></table></div>
         <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="sm" data-act="kit-csv">CSV</button><button class="sm" data-act="kit-expand">${svg('expand', 16)} Expand</button></div>`
-        : '<p class="muted" style="text-align:center;padding:14px 0">No payments to Dakshin Thindi in this date range.</p>'}</div></div></div></article></div>`;
+        : '<p class="muted" style="text-align:center;padding:14px 0">No Central Kitchen payments in this date range. Files generated before this update don’t record the restaurant name, so they aren’t counted here.</p>'}</div></div></div></article></div>`;
   }
   function openKit() {
     const [f, t] = dashRange(), list = db.history.filter(h => inRange(h, f, t)), items = kitItems(list), sum = items.reduce((s, x) => s + x.r.amount, 0);
@@ -1844,8 +1849,8 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
     const prevTotal = db.history.filter(h => inRange(h, pf, pt)).reduce((s, h) => s + h.total, 0);
     const total = list.reduce((s, h) => s + h.total, 0), pays = list.reduce((s, h) => s + h.count, 0), pend = list.filter(h => h.status === 'Generated' || h.status === 'Uploaded'), attn = list.filter(h => h.status === 'Needs attention');
     const delta = prevTotal ? Math.round((total - prevTotal) / prevTotal * 100) : null;
-    const byOutlet = new Map(), byPayee = new Map();
-    list.forEach(h => h.rows.forEach(r => { byOutlet.set(acctOf(r), (byOutlet.get(acctOf(r)) || 0) + r.amount); byPayee.set(r.name, (byPayee.get(r.name) || 0) + r.amount); }));
+    const byOutlet = new Map(), byPayee = new Map(), byCo = new Map();
+    list.forEach(h => h.rows.forEach(r => { byOutlet.set(acctOf(r), (byOutlet.get(acctOf(r)) || 0) + r.amount); byPayee.set(r.name, (byPayee.get(r.name) || 0) + r.amount); if (r.company) byCo.set(r.company, (byCo.get(r.company) || 0) + r.amount); }));
     const bk = makeBuckets(f, t, list); dashCache = { bk, list };
     if (d.sel != null && !bk[d.sel]) d.sel = null;
     return `${head('Dashboard', 'Payment files generated, at a glance.')}${banners()}
@@ -1860,7 +1865,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       ${kitHtml(list, total)}
       <div class="dgrid"><section class="card"><h2>Amount by ${n <= 31 ? 'day' : n <= 180 ? 'week' : 'month'}</h2><div class="chartwrap"><div class="chart" id="chart">${chartSvg(bk)}</div><div class="tt" id="tt" role="presentation"></div></div>
         <p class="muted" style="margin:8px 0 0">Select a bar to filter the reports below.</p></section>
-        <section class="card"><h2>By debit account${info('Which of your bank accounts the money is paid from. A vendor named dt1 / dt2 uses that outlet’s account; vendors with no tag use the default account.')}</h2>${hbars(byOutlet, 'No payments in this range.')}<h2 style="margin-top:18px">Top payees</h2>${hbars(byPayee, 'No payments in this range.')}</section></div>
+        <section class="card"><h2>By debit account${info('Which of your bank accounts the money is paid from. A vendor named dt1 / dt2 uses that outlet’s account; vendors with no tag use the default account.')}</h2>${hbars(byOutlet, 'No payments in this range.')}${byCo.size ? `<h2 style="margin-top:18px">By restaurant</h2>${hbars(byCo, '')}` : ''}<h2 style="margin-top:18px">Top payees</h2>${hbars(byPayee, 'No payments in this range.')}</section></div>
       <section class="card" id="reps">${repsHtml()}</section>`;
   }
   const paintReps = () => { const el = $('#reps'); if (el) el.innerHTML = repsHtml(); };
@@ -2223,6 +2228,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
         db = applyLocal(blank()); save(); g.lines = []; g.file = ''; g.batch.refStart = 1; ui.reveal = false; render(); audit('Data erased');
       }
     } else if (a === 'hist-open') { ui.openHist = ui.openHist === id ? null : id; render(); }
+    else if (a === 'hist-del') {
+      // Only unverified files (e.g. test runs) can be removed; verified/paid files are the payment record.
+      const hh = db.history.find(h => h.id === id); if (!hh || hh.verified || hh.status === 'Paid') return;
+      if (!confirm(`Delete “${hh.report || typeLabel(hh)}” (${hh.count} payments · ${inr(hh.total)}) from the dashboard and history?\n\nOnly do this for test files that were never uploaded to the bank.`)) return;
+      if (!(await gate('Delete payment file'))) return toast('Delete cancelled.', true);
+      db.history = db.history.filter(h => h !== hh); if (ui.dash.openRep === id) ui.dash.openRep = null;
+      save(); audit('Payment file deleted', `${hh.report || hh.type} · ${hh.count} payments · ${inr(hh.total)} · ${hh.iso}`); toast('File deleted'); render();
+    }
     else if (a === 'hist-up') { const hh = db.history.find(h => h.id === id); if (hh.status === 'Generated') hh.status = 'Uploaded'; save(); audit('Marked uploaded', id); render(); }
     else if (a === 'hist-dl') {
       if (!(await gate('Download payment file'))) return;
