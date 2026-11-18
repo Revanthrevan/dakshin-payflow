@@ -879,18 +879,14 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       if (!l.confirmed) { errors.push(`${l.source}: confirm match to “${b.name}”.`); continue; }
       const a = accs.get(l.accountId);
       if (!a) { errors.push(`${l.source}: no debit account.`); continue; }
-      // Combine = one payment per vendor bank account, even when the vendor appears under several outlets / debit accounts.
-      const key = o.combine ? (b.account && b.ifsc ? `${b.account}|${b.ifsc}` : `B${b.id}`) : `L${l.id}`;
-      const g = groups.get(key) || { b, amount: 0, sources: [], lineIds: [], outlets: new Set(), byAcc: new Map() };
+      // Combine = one payment per vendor bank account *per paying company*. The debit account identifies the company
+      // (e.g. Bengaluru Cafe vs Central Kitchen), so the same vendor paid by two companies stays as two rows and each
+      // company's books tally.
+      const vendor = b.account && b.ifsc ? `${b.account}|${b.ifsc}` : `B${b.id}`;
+      const key = o.combine ? `${vendor}|${a.id}` : `L${l.id}`;
+      const g = groups.get(key) || { b, a, amount: 0, sources: [], lineIds: [], outlets: new Set() };
       g.amount = round2(g.amount + amt); g.sources.push(l.source); g.lineIds.push(l.id); if (l.tag) g.outlets.add(l.tag);
-      g.byAcc.set(a.id, round2((g.byAcc.get(a.id) || 0) + amt));
       groups.set(key, g);
-    }
-    // A merged payment is debited from the account that carries the largest share.
-    for (const g of groups.values()) {
-      let best = null; for (const [id, v] of g.byAcc) if (!best || v > best[1]) best = [id, v];
-      g.a = accs.get(best[0]);
-      if (g.byAcc.size > 1) warnings.push(`${g.b.name}: ${g.lineIds.length} lines from ${g.byAcc.size} debit accounts merged into one payment of ₹${g.amount.toFixed(2)}, debited from “${g.a.label}”. Untick “Merge the same vendor” to pay them separately.`);
     }
     const narrCut = new Set();
     const rows = []; let ref = Number(o.refStart) || 1;
@@ -1375,7 +1371,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
       <label class="f">Credit narration<input type="text" data-b="creditNarration" value="${esc(b.creditNarration)}" aria-describedby="cnt-creditNarration"><small class="cnt" id="cnt-creditNarration" aria-live="polite"></small></label>
     </div>
     <div class="row" style="margin-top:14px;gap:20px">
-      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment (sum of amounts)</label>
+      <label class="row"><input type="checkbox" data-b="combine" ${b.combine ? 'checked' : ''}> Merge the same vendor into one payment per paying company (sum of amounts)</label>
       <label class="row"><input type="checkbox" data-b="split" ${b.split ? 'checked' : ''}> One file per debit account</label></div></section>
     <section class="card"><h2>Review</h2>
       <datalist id="benlist">${db.beneficiaries.map(x => `<option value="${esc(benLabel(x))}"></option>`).join('')}</datalist>
@@ -1466,7 +1462,7 @@ Resources:`;for(let t of c){if(!t||typeof t!=`string`)throw Error(`@supabase/aut
   /** Tag review lines that were merged into one payment with the combined total. */
   function paintMerges(res) {
     const note = new Map();
-    res.rows.forEach(r => { if (r.lineIds.length > 1) r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)}`)); });
+    res.rows.forEach(r => { if (r.lineIds.length > 1) r.lineIds.forEach(id => note.set(id, `Merged · ${r.lineIds.length} lines → ${inr(r.amount)} from ${accLabel(db.accounts.find(a => a.number === r.debitAccount) || { label: r.debitAccount, number: r.debitAccount })}`)); });
     document.querySelectorAll('#tb tr[data-i]').forEach(tr => {
       const el = tr.querySelector('.mg'); if (!el) return;
       const t = note.get(+tr.dataset.i) || '';
